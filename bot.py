@@ -12,7 +12,7 @@ matplotlib.use('Agg')  # Use non-interactive backend for servers
 import matplotlib.pyplot as plt
 import numpy as np
 from logging.handlers import RotatingFileHandler
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, KeyboardButton, ReplyKeyboardMarkup, Update
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -241,6 +241,11 @@ class KeyboardFactory:
     def __init__(self, categories: List[str]):
         self.categories = categories
 
+    def menu_button(self) -> ReplyKeyboardMarkup:
+        """Persistent reply keyboard with Menu button."""
+        keyboard = [[KeyboardButton("📱 Menu")]]
+        return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, is_persistent=True)
+
     def main_menu(self) -> InlineKeyboardMarkup:
         keyboard = [
             [InlineKeyboardButton("➕ Add Expense", callback_data="menu_add"), InlineKeyboardButton("💰 Add Income", callback_data="menu_income")],
@@ -367,12 +372,52 @@ class ExpenseParser:
 class BudgetBot:
     """Object-oriented Telegram bot for personal finance tracking."""
 
-    def __init__(self, expense_manager: ExpenseManager, config: BotConfig, viz: VisualizationService, keyboards: KeyboardFactory):
-        self.expense_manager = expense_manager
+    def __init__(self, config: BotConfig, viz: VisualizationService, categories: List[str]):
         self.config = config
         self.viz = viz
-        self.keyboards = keyboards
+        self.categories = categories
+        self.keyboards = KeyboardFactory(categories)
+        self._user_managers: Dict[str, ExpenseManager] = {}
         self.application = Application.builder().token(config.token).build()
+    
+    def _get_manager(self, user_id: str) -> ExpenseManager:
+        """Get or create ExpenseManager for a specific user."""
+        if user_id not in self._user_managers:
+            self._user_managers[user_id] = ExpenseManager(user_id=user_id)
+        return self._user_managers[user_id]
+    
+    def _get_user_id(self, update: Update) -> Optional[str]:
+        """Extract user identifier from update (prefer username, fallback to user_id)."""
+        user = update.effective_user
+        if user:
+            # Prefer username for human-readable db names, fallback to user_id
+            return user.username or str(user.id)
+        return None
+    
+    async def _require_onboarding(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+        """Check if user has completed onboarding. Returns True if onboarding is complete.
+        
+        If not complete, prompts user to start onboarding.
+        """
+        user_id = self._get_user_id(update)
+        if not user_id:
+            return False
+        
+        manager = self._get_manager(user_id)
+        chat_id = update.effective_chat.id
+        
+        # If already in onboarding flow, don't interrupt
+        if context.user_data.get('onboarding'):
+            return True
+        
+        if not manager.is_onboarding_completed(chat_id):
+            await update.message.reply_text(
+                "👋 Welcome! You need to complete the setup first.\n\n"
+                "Use /start to begin the onboarding process.",
+                reply_markup=self.keyboards.menu_button()
+            )
+            return False
+        return True
 
     def run(self) -> None:
         self._register_handlers()
@@ -415,16 +460,53 @@ class BudgetBot:
         )
 
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        user_id = self._get_user_id(update)
+        if not user_id:
+            await update.message.reply_text("❌ Could not identify user. Please try again.")
+            return
+        
         chat_id = update.effective_chat.id
-        self.expense_manager.register_user(chat_id)
+        manager = self._get_manager(user_id)
+        manager.register_user(chat_id)
+        
+        # Check if this is a returning user
+        if manager.is_onboarding_completed(chat_id):
+            # Check if new month needs budget passover
+            now = datetime.now()
+            if not manager.has_budget_for_month(now.year, now.month):
+                # Offer to copy from previous month
+                keyboard = [
+                    [InlineKeyboardButton("📋 Copy Last Month's Budget", callback_data="passover_budget")],
+                    [InlineKeyboardButton("🆕 Start Fresh", callback_data="back_menu")],
+                ]
+                await update.message.reply_text(
+                    f"👋 Welcome back!\n\nNo budget set for {now.strftime('%B %Y')} yet.\n"
+                    "Would you like to copy your budget from last month?",
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+            else:
+                await update.message.reply_text(
+                    "👋 Welcome back!",
+                    reply_markup=self.keyboards.menu_button()
+                )
+                await update.message.reply_text(
+                    "📱 *Main Menu*", 
+                    parse_mode='Markdown', 
+                    reply_markup=self.keyboards.main_menu()
+                )
+            return
+        
+        # New user - start onboarding
         welcome = (
             "🎯 *Personal Finance Bot*\n\n"
             "Track expenses, budgets, and income with ease.\n\n"
-            "*Quick Entry:* `groceries 45.50 note`\n"
-            "*With receipt:* send photo + caption\n\n"
-            "Or tap the menu below."
+            "Let's get you set up first!"
         )
-        await update.message.reply_text(welcome, parse_mode='Markdown', reply_markup=self.keyboards.main_menu())
+        await update.message.reply_text(
+            welcome, 
+            parse_mode='Markdown', 
+            reply_markup=self.keyboards.menu_button()
+        )
 
         now = datetime.now()
         month_label = now.strftime('%B %Y')
@@ -432,12 +514,18 @@ class BudgetBot:
             'stage': 'income',
             'year': now.year,
             'month': now.month,
+            'user_id': user_id,
         }
         await update.message.reply_text(
-            f"Let's set up your {month_label} plan.\nEnter projected monthly income (number) or type 'skip' to skip.",
+            f"📝 *Step 1/2: Monthly Income*\n\n"
+            f"Let's set up your {month_label} budget.\n"
+            f"Enter your projected monthly income (number) or type 'skip'.",
+            parse_mode='Markdown'
         )
 
     async def help(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._require_onboarding(update, context):
+            return
         help_msg = (
             "📚 *Help Guide*\n\n"
             "• `groceries 45.50 milk`\n"
@@ -449,20 +537,32 @@ class BudgetBot:
         await update.message.reply_text(help_msg, parse_mode='Markdown', reply_markup=self.keyboards.main_menu())
 
     async def menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._require_onboarding(update, context):
+            return
         await update.message.reply_text("📱 *Main Menu*", parse_mode='Markdown', reply_markup=self.keyboards.main_menu())
 
     async def today(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._require_onboarding(update, context):
+            return
         await self._send_summary_with_charts(update, timeframe="day", include_trend=False)
 
     async def week(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._require_onboarding(update, context):
+            return
         await self._send_summary_with_charts(update, timeframe="week", include_trend=True)
 
     async def month(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._require_onboarding(update, context):
+            return
         await self._send_summary_with_charts(update, timeframe="month", include_trend=True)
 
     async def budget(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        status = self.expense_manager.get_budget_status()
-        plan = self.expense_manager.get_monthly_plan()
+        if not await self._require_onboarding(update, context):
+            return
+        user_id = self._get_user_id(update)
+        manager = self._get_manager(user_id)
+        status = manager.get_budget_status()
+        plan = manager.get_monthly_plan()
         await update.message.reply_text(status)
         chart = self.viz.budget_chart(plan)
         if chart:
@@ -470,24 +570,36 @@ class BudgetBot:
         keyboard = [
             [InlineKeyboardButton("📝 Set Category Budget", callback_data="set_budget")],
             [InlineKeyboardButton("💵 Set Projected Income", callback_data="set_income_proj")],
+            [InlineKeyboardButton("📋 Copy Last Month's Budget", callback_data="passover_budget")],
             [InlineKeyboardButton("🔙 Back to Menu", callback_data="back_menu")],
         ]
         await update.message.reply_text("Update your budget plan?", reply_markup=InlineKeyboardMarkup(keyboard))
 
     async def reset_data(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        await update.message.reply_text(self.expense_manager.clear_all_data())
+        if not await self._require_onboarding(update, context):
+            return
+        user_id = self._get_user_id(update)
+        manager = self._get_manager(user_id)
+        await update.message.reply_text(manager.clear_all_data())
 
     async def income(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._require_onboarding(update, context):
+            return
         context.user_data.clear()
         context.user_data['action'] = 'add_income'
+        context.user_data['user_id'] = self._get_user_id(update)
         await update.message.reply_text(
             "💰 *Add Income*\nFormat: `[Source] [Amount] [Note optional]`\nExample: `Salary 3500 January`",
             parse_mode='Markdown',
         )
 
     async def recent(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._require_onboarding(update, context):
+            return
+        user_id = self._get_user_id(update)
+        manager = self._get_manager(user_id)
         chat_id = update.effective_chat.id if update.effective_chat else None
-        transactions = self.expense_manager.get_recent_transactions(10)
+        transactions = manager.get_recent_transactions(10)
         if not transactions:
             await context.bot.send_message(chat_id=chat_id, text="📭 No transactions yet.", reply_markup=self.keyboards.main_menu())
             return
@@ -500,12 +612,20 @@ class BudgetBot:
         await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='Markdown', reply_markup=self.keyboards.main_menu())
 
     async def delete_last(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        await update.message.reply_text(self.expense_manager.delete_last())
+        if not await self._require_onboarding(update, context):
+            return
+        user_id = self._get_user_id(update)
+        manager = self._get_manager(user_id)
+        await update.message.reply_text(manager.delete_last())
 
     async def export(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._require_onboarding(update, context):
+            return
+        user_id = self._get_user_id(update)
+        manager = self._get_manager(user_id)
         chat_id = update.effective_chat.id if update.effective_chat else None
         try:
-            filename = self.expense_manager.export_to_csv()
+            filename = manager.export_to_csv()
             if not filename:
                 if chat_id:
                     await context.bot.send_message(chat_id=chat_id, text="❌ No expenses to export.")
@@ -525,8 +645,12 @@ class BudgetBot:
                 await context.bot.send_message(chat_id=chat_id, text="❌ Export failed. Please try again.")
 
     async def settings(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._require_onboarding(update, context):
+            return
+        user_id = self._get_user_id(update)
+        manager = self._get_manager(user_id)
         chat_id = update.effective_chat.id
-        enabled = self.expense_manager.is_daily_report_enabled(chat_id)
+        enabled = manager.is_daily_report_enabled(chat_id)
         await update.message.reply_text("⚙️ Settings", parse_mode='Markdown', reply_markup=KeyboardFactory.settings_keyboard(enabled))
 
     async def button_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -534,6 +658,8 @@ class BudgetBot:
         await query.answer()
         chat_id = query.message.chat_id
         data = query.data
+        user_id = query.from_user.username or str(query.from_user.id)
+        manager = self._get_manager(user_id)
         logger.debug("callback: chat_id=%s data=%s state=%s", chat_id, data, dict(context.user_data))
 
         async def edit_or_send(text: str, reply_markup=None, parse_mode=None):
@@ -595,7 +721,7 @@ class BudgetBot:
             if 'category' in context.user_data and 'amount' in context.user_data:
                 category = context.user_data['category']
                 amount = context.user_data['amount']
-                response = self.expense_manager.add_expense(category, amount)
+                response = manager.add_expense(category, amount)
                 context.user_data.clear()
                 await edit_or_send(response, reply_markup=self.keyboards.main_menu())
             else:
@@ -604,7 +730,7 @@ class BudgetBot:
 
         if data in {"report_day", "report_week", "report_month"}:
             timeframe = data.split('_')[1]
-            summary, chart_data = self.expense_manager.get_summary(timeframe)
+            summary, chart_data = manager.get_summary(timeframe)
             await edit_or_send(summary)
             if chart_data:
                 chart = self.viz.pie_chart(chart_data, f"This {timeframe.title()} Spending")
@@ -613,13 +739,19 @@ class BudgetBot:
             return
 
         if data == "menu_budget":
-            status = self.expense_manager.get_budget_status()
+            status = manager.get_budget_status()
             keyboard = [
                 [InlineKeyboardButton("📝 Set Budget", callback_data="set_budget")],
                 [InlineKeyboardButton("💵 Set Income", callback_data="set_income_proj")],
+                [InlineKeyboardButton("📋 Copy Last Month", callback_data="passover_budget")],
                 [InlineKeyboardButton("🔙 Back", callback_data="back_menu")],
             ]
             await edit_or_send(status, reply_markup=InlineKeyboardMarkup(keyboard))
+            return
+
+        if data == "passover_budget":
+            result = manager.copy_budget_from_previous_month()
+            await edit_or_send(result, reply_markup=self.keyboards.main_menu())
             return
 
         if data == "set_budget":
@@ -685,7 +817,7 @@ class BudgetBot:
             if 'income_source' in context.user_data and 'income_amount' in context.user_data:
                 source = context.user_data['income_source']
                 amount = context.user_data['income_amount']
-                response = self.expense_manager.add_income(source, amount)
+                response = manager.add_income(source, amount)
                 context.user_data.clear()
                 await edit_or_send(response, reply_markup=self.keyboards.main_menu())
             else:
@@ -701,12 +833,12 @@ class BudgetBot:
             return
 
         if data == "menu_settings":
-            enabled = self.expense_manager.is_daily_report_enabled(chat_id)
+            enabled = manager.is_daily_report_enabled(chat_id)
             await edit_or_send("⚙️ Settings", reply_markup=KeyboardFactory.settings_keyboard(enabled), parse_mode='Markdown')
             return
 
         if data == "toggle_daily":
-            new_state = self.expense_manager.toggle_daily_report(chat_id)
+            new_state = manager.toggle_daily_report(chat_id)
             status = "enabled ✅" if new_state else "disabled ❌"
             await edit_or_send(
                 f"Daily report {status}",
@@ -774,32 +906,32 @@ class BudgetBot:
 
         # Confirmed deletions
         if data == "confirm_expenses":
-            result = self.expense_manager.clear_expenses()
+            result = manager.clear_expenses()
             await edit_or_send(result, reply_markup=KeyboardFactory.delete_keyboard())
             return
 
         if data == "confirm_income":
-            result = self.expense_manager.clear_income()
+            result = manager.clear_income()
             await edit_or_send(result, reply_markup=KeyboardFactory.delete_keyboard())
             return
 
         if data == "confirm_budgets":
-            result = self.expense_manager.clear_budgets()
+            result = manager.clear_budgets()
             await edit_or_send(result, reply_markup=KeyboardFactory.delete_keyboard())
             return
 
         if data == "confirm_last_5":
-            result = self.expense_manager.delete_last_n(5)
+            result = manager.delete_last_n(5)
             await edit_or_send(result, reply_markup=KeyboardFactory.delete_keyboard())
             return
 
         if data == "confirm_last_10":
-            result = self.expense_manager.delete_last_n(10)
+            result = manager.delete_last_n(10)
             await edit_or_send(result, reply_markup=KeyboardFactory.delete_keyboard())
             return
 
         if data == "confirm_all":
-            result = self.expense_manager.clear_all_data()
+            result = manager.clear_all_data()
             await edit_or_send(result, reply_markup=self.keyboards.main_menu())
             return
 
@@ -813,23 +945,33 @@ class BudgetBot:
 
     async def _prompt_budget_category(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         onboarding = context.user_data.get('onboarding', {})
+        user_id = onboarding.get('user_id') or self._get_user_id(update)
+        manager = self._get_manager(user_id)
+        chat_id = update.effective_chat.id
         idx = onboarding.get('category_index', 0)
         categories = self.keyboards.categories
         if idx >= len(categories):
+            # Mark onboarding as complete
+            manager.complete_onboarding(chat_id)
             context.user_data.pop('onboarding', None)
-            status = self.expense_manager.get_budget_status()
+            status = manager.get_budget_status()
             await update.message.reply_text(
-                "✅ Onboarding complete. Current budget status:\n\n" + status,
+                "✅ Setup complete! You can now start tracking expenses.\n\nCurrent budget status:\n\n" + status,
                 reply_markup=self.keyboards.main_menu(),
             )
             return
         category = categories[idx]
         await update.message.reply_text(
-            f"Set budget for {category} (number). Type 'skip' to leave it blank.",
+            f"📝 *Step 2/2: Category Budgets* ({idx + 1}/{len(categories)})\n\n"
+            f"Set budget for *{category}*\nEnter amount or type 'skip'.",
+            parse_mode='Markdown'
         )
 
     async def _handle_onboarding(self, update: Update, context: ContextTypes.DEFAULT_TYPE, text: str) -> None:
         onboarding = context.user_data.get('onboarding', {})
+        user_id = onboarding.get('user_id') or self._get_user_id(update)
+        manager = self._get_manager(user_id)
+        chat_id = update.effective_chat.id
         year = onboarding.get('year', datetime.now().year)
         month = onboarding.get('month', datetime.now().month)
 
@@ -840,12 +982,12 @@ class BudgetBot:
                 except ValueError:
                     await update.message.reply_text("❌ Enter a number for income (or 'skip').")
                     return
-                response = self.expense_manager.set_projected_income(year, month, "Income", amount)
+                response = manager.set_projected_income(year, month, "Income", amount)
                 await update.message.reply_text(response)
             onboarding['stage'] = 'categories'
             onboarding['category_index'] = 0
             context.user_data['onboarding'] = onboarding
-            await update.message.reply_text("Now let's set budgets per category.")
+            await update.message.reply_text("Great! Now let's set budgets per category.\n(You can skip any category you don't use)")
             await self._prompt_budget_category(update, context)
             return
 
@@ -853,10 +995,12 @@ class BudgetBot:
             idx = onboarding.get('category_index', 0)
             categories = self.keyboards.categories
             if idx >= len(categories):
+                # Mark onboarding as complete
+                manager.complete_onboarding(chat_id)
                 context.user_data.pop('onboarding', None)
-                status = self.expense_manager.get_budget_status()
+                status = manager.get_budget_status()
                 await update.message.reply_text(
-                    "✅ Onboarding complete. Current budget status:\n\n" + status,
+                    "✅ Setup complete! You can now start tracking expenses.\n\nCurrent budget status:\n\n" + status,
                     reply_markup=self.keyboards.main_menu(),
                 )
                 return
@@ -865,7 +1009,7 @@ class BudgetBot:
             if text.lower() != 'skip':
                 try:
                     amount = float(text.replace('$', '').replace(',', ''))
-                    response = self.expense_manager.set_budget(year, month, category, amount)
+                    response = manager.set_budget(year, month, category, amount)
                     await update.message.reply_text(response)
                 except ValueError:
                     await update.message.reply_text("❌ Enter a number for budget or 'skip'.")
@@ -878,10 +1022,46 @@ class BudgetBot:
 
     async def handle_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         text = update.message.text.strip()
+        user_id = self._get_user_id(update)
+        
+        # Handle persistent menu button press
+        if text == "📱 Menu":
+            # Check onboarding first
+            if user_id:
+                manager = self._get_manager(user_id)
+                chat_id = update.effective_chat.id
+                if not manager.is_onboarding_completed(chat_id) and not context.user_data.get('onboarding'):
+                    await update.message.reply_text(
+                        "👋 Welcome! Please complete the setup first.\n\nUse /start to begin.",
+                        reply_markup=self.keyboards.menu_button()
+                    )
+                    return
+            await update.message.reply_text(
+                "📱 *Main Menu*", 
+                parse_mode='Markdown', 
+                reply_markup=self.keyboards.main_menu()
+            )
+            return
+        
         onboarding = context.user_data.get('onboarding')
         if onboarding:
             await self._handle_onboarding(update, context, text)
             return
+        
+        # Check onboarding for non-onboarding text input
+        if user_id:
+            manager = self._get_manager(user_id)
+            chat_id = update.effective_chat.id
+            if not manager.is_onboarding_completed(chat_id):
+                await update.message.reply_text(
+                    "👋 Welcome! Please complete the setup first.\n\nUse /start to begin.",
+                    reply_markup=self.keyboards.menu_button()
+                )
+                return
+        else:
+            await update.message.reply_text("❌ Could not identify user. Please try again.")
+            return
+            
         user_state = context.user_data
 
         if user_state.get('awaiting') == 'amount':
@@ -908,7 +1088,7 @@ class BudgetBot:
             if category is None or amount is None:
                 await update.message.reply_text("Session expired. Use /menu.")
                 return
-            response = self.expense_manager.add_expense(category, amount, note)
+            response = manager.add_expense(category, amount, note)
             user_state.clear()
             await update.message.reply_text(response, reply_markup=self.keyboards.main_menu())
             return
@@ -946,7 +1126,7 @@ class BudgetBot:
             if source is None or amount is None:
                 await update.message.reply_text("Session expired. Use /menu.")
                 return
-            response = self.expense_manager.add_income(source, amount, text)
+            response = manager.add_income(source, amount, text)
             user_state.clear()
             await update.message.reply_text(response, reply_markup=self.keyboards.main_menu())
             return
@@ -955,7 +1135,7 @@ class BudgetBot:
         if user_state.get('action') == 'add_income' and not user_state.get('income_source'):
             try:
                 source, amount, note = ExpenseParser.parse_income(text)
-                response = self.expense_manager.add_income(source, amount, note)
+                response = manager.add_income(source, amount, note)
                 user_state.clear()
                 await update.message.reply_text(response, reply_markup=self.keyboards.main_menu())
             except ValueError as exc:
@@ -966,7 +1146,7 @@ class BudgetBot:
             try:
                 source, amount, _ = ExpenseParser.parse_income(text)
                 now = datetime.now()
-                response = self.expense_manager.set_projected_income(now.year, now.month, source, amount)
+                response = manager.set_projected_income(now.year, now.month, source, amount)
                 user_state.clear()
                 await update.message.reply_text(response, reply_markup=self.keyboards.main_menu())
             except ValueError as exc:
@@ -977,7 +1157,7 @@ class BudgetBot:
             try:
                 amount = float(text.replace('$', '').replace(',', ''))
                 now = datetime.now()
-                response = self.expense_manager.set_budget(now.year, now.month, user_state['category'], amount)
+                response = manager.set_budget(now.year, now.month, user_state['category'], amount)
                 user_state.clear()
                 await update.message.reply_text(response, reply_markup=self.keyboards.main_menu())
             except ValueError:
@@ -990,16 +1170,32 @@ class BudgetBot:
             await update.message.reply_text(f"❌ {exc}\nUse /menu for guided entry.")
             return
 
-        matched_category = self.expense_manager.match_category(category_raw)
+        matched_category = manager.match_category(category_raw)
         if not matched_category:
             categories_list = "\n".join(self.keyboards.categories)
             await update.message.reply_text(f"❌ Category '{category_raw}' not recognized.\n\nAvailable:\n{categories_list}")
             return
 
-        response = self.expense_manager.add_expense(matched_category, amount, note)
+        response = manager.add_expense(matched_category, amount, note)
         await update.message.reply_text(response, reply_markup=self.keyboards.main_menu())
 
     async def handle_photo(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        user_id = self._get_user_id(update)
+        if not user_id:
+            await update.message.reply_text("❌ Could not identify user.")
+            return
+        
+        manager = self._get_manager(user_id)
+        chat_id = update.effective_chat.id
+        
+        # Check onboarding
+        if not manager.is_onboarding_completed(chat_id):
+            await update.message.reply_text(
+                "👋 Welcome! Please complete the setup first.\n\nUse /start to begin.",
+                reply_markup=self.keyboards.menu_button()
+            )
+            return
+        
         caption = update.message.caption
         if not caption:
             await update.message.reply_text("Add a caption like `groceries 45.50 note`", parse_mode='Markdown')
@@ -1010,56 +1206,65 @@ class BudgetBot:
             await update.message.reply_text(f"❌ {exc}")
             return
 
-        matched_category = self.expense_manager.match_category(category_raw)
+        matched_category = manager.match_category(category_raw)
         if not matched_category:
             await update.message.reply_text(f"❌ Category '{category_raw}' not recognized.")
             return
 
         photo = update.message.photo[-1]
         receipt_file_id = photo.file_id
-        response = self.expense_manager.add_expense(matched_category, amount, note, receipt_file_id)
+        response = manager.add_expense(matched_category, amount, note, receipt_file_id)
         await update.message.reply_text(response, reply_markup=self.keyboards.main_menu())
 
     async def send_daily_report(self, context: ContextTypes.DEFAULT_TYPE) -> None:
-        users = self.expense_manager.get_all_registered_users()
-        for chat_id in users:
-            try:
-                summary, chart_data = self.expense_manager.get_summary("week")
-                daily_data = self.expense_manager.get_daily_breakdown("week")
-                await context.bot.send_message(chat_id=chat_id, text=f"🌙 End of Day Report\n\n{summary}")
-                if chart_data:
-                    chart = self.viz.pie_chart(chart_data, "This Week So Far")
-                    if chart:
-                        await context.bot.send_photo(chat_id=chat_id, photo=InputFile(chart, filename="daily_report.png"))
-                if daily_data:
-                    bar = self.viz.bar_chart(daily_data, "Daily Spending This Week")
-                    if bar:
-                        await context.bot.send_photo(chat_id=chat_id, photo=InputFile(bar, filename="daily_trend.png"))
-            except Exception as exc:
-                logger.error("Failed daily report to %s: %s", chat_id, exc)
+        """Send daily reports to all users with their own data."""
+        # Iterate over all cached user managers
+        for user_id, manager in self._user_managers.items():
+            users = manager.get_all_registered_users()
+            for chat_id in users:
+                if not manager.is_daily_report_enabled(chat_id):
+                    continue
+                try:
+                    summary, chart_data = manager.get_summary("week")
+                    daily_data = manager.get_daily_breakdown("week")
+                    await context.bot.send_message(chat_id=chat_id, text=f"🌙 End of Day Report\n\n{summary}")
+                    if chart_data:
+                        chart = self.viz.pie_chart(chart_data, "This Week So Far")
+                        if chart:
+                            await context.bot.send_photo(chat_id=chat_id, photo=InputFile(chart, filename="daily_report.png"))
+                    if daily_data:
+                        bar = self.viz.bar_chart(daily_data, "Daily Spending This Week")
+                        if bar:
+                            await context.bot.send_photo(chat_id=chat_id, photo=InputFile(bar, filename="daily_trend.png"))
+                except Exception as exc:
+                    logger.error("Failed daily report to %s: %s", chat_id, exc)
 
     async def send_monthly_report(self, context: ContextTypes.DEFAULT_TYPE) -> None:
-        users = self.expense_manager.get_all_registered_users()
-        for chat_id in users:
-            try:
-                status = self.expense_manager.get_budget_status()
-                plan = self.expense_manager.get_monthly_plan()
-                await context.bot.send_message(chat_id=chat_id, text=f"📅 Monthly Budget Report\n\n{status}")
-                chart = self.viz.budget_chart(plan)
-                if chart:
-                    await context.bot.send_photo(chat_id=chat_id, photo=InputFile(chart, filename="monthly_budget.png"))
-            except Exception as exc:
-                logger.error("Failed monthly report to %s: %s", chat_id, exc)
+        """Send monthly reports to all users with their own data."""
+        for user_id, manager in self._user_managers.items():
+            users = manager.get_all_registered_users()
+            for chat_id in users:
+                try:
+                    status = manager.get_budget_status()
+                    plan = manager.get_monthly_plan()
+                    await context.bot.send_message(chat_id=chat_id, text=f"📅 Monthly Budget Report\n\n{status}")
+                    chart = self.viz.budget_chart(plan)
+                    if chart:
+                        await context.bot.send_photo(chat_id=chat_id, photo=InputFile(chart, filename="monthly_budget.png"))
+                except Exception as exc:
+                    logger.error("Failed monthly report to %s: %s", chat_id, exc)
 
     async def _send_summary_with_charts(self, update: Update, timeframe: str, include_trend: bool) -> None:
-        summary, chart_data = self.expense_manager.get_summary(timeframe)
+        user_id = self._get_user_id(update)
+        manager = self._get_manager(user_id)
+        summary, chart_data = manager.get_summary(timeframe)
         await update.message.reply_text(summary)
         if chart_data:
             chart = self.viz.pie_chart(chart_data, f"This {timeframe.title()} Spending")
             if chart:
                 await update.message.reply_photo(photo=InputFile(chart, filename=f"{timeframe}_breakdown.png"), caption="📊 Category Breakdown")
         if include_trend:
-            daily_data = self.expense_manager.get_daily_breakdown(timeframe)
+            daily_data = manager.get_daily_breakdown(timeframe)
             if daily_data:
                 bar = self.viz.bar_chart(daily_data, f"Daily Spending This {timeframe.title()}")
                 if bar:
@@ -1073,11 +1278,9 @@ def main() -> None:
             "❌ TELEGRAM_BOT_TOKEN not set.\nGet it from @BotFather and export TELEGRAM_BOT_TOKEN='your-token'",
         )
 
-    expense_manager = ExpenseManager()
     config = BotConfig(token=token)
     viz = VisualizationService()
-    keyboards = KeyboardFactory(expense_manager.CATEGORIES)
-    bot = BudgetBot(expense_manager, config, viz, keyboards)
+    bot = BudgetBot(config, viz, ExpenseManager.CATEGORIES)
     bot.run()
 
 

@@ -11,7 +11,7 @@ from difflib import get_close_matches
 class ExpenseManager:
     """Manages all database operations for expense tracking."""
     
-    DB_PATH = "expenses.db"
+    DB_DIR = "user_data"
     CATEGORIES = [
         "🛒 Groceries", 
         "🍽️ Dining Out", 
@@ -71,13 +71,25 @@ class ExpenseManager:
         "misc": "🔧 Other",
     }
     
-    def __init__(self, db_path: Optional[str] = None):
+    def __init__(self, db_path: Optional[str] = None, user_id: Optional[str] = None):
         """Initialize database connection and create schema if needed.
 
         Args:
             db_path: Optional custom database path (used by tests)
+            user_id: Optional user identifier for isolated database
         """
-        self.db_path = db_path or self.DB_PATH
+        if db_path:
+            self.db_path = db_path
+        elif user_id:
+            # Create per-user database directory
+            db_dir = Path(self.DB_DIR)
+            db_dir.mkdir(parents=True, exist_ok=True)
+            # Sanitize user_id for safe filename
+            safe_id = "".join(c for c in str(user_id) if c.isalnum() or c in ('_', '-'))
+            self.db_path = str(db_dir / f"{safe_id}.db")
+        else:
+            # Fallback for backward compatibility
+            self.db_path = "expenses.db"
         self._init_db()
     
     def _init_db(self):
@@ -127,7 +139,8 @@ class ExpenseManager:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 chat_id INTEGER UNIQUE,
                 daily_report_enabled BOOLEAN DEFAULT 1,
-                report_time TEXT DEFAULT '21:00'
+                report_time TEXT DEFAULT '21:00',
+                onboarding_completed BOOLEAN DEFAULT 0
             )
         ''')
         
@@ -145,6 +158,7 @@ class ExpenseManager:
         
         conn.commit()
         self._ensure_receipt_column(conn)
+        self._ensure_onboarding_column(conn)
         conn.close()
 
     @staticmethod
@@ -155,6 +169,16 @@ class ExpenseManager:
         columns = [row[1] for row in cursor.fetchall()]
         if 'receipt_file_id' not in columns:
             cursor.execute("ALTER TABLE transactions ADD COLUMN receipt_file_id TEXT")
+            conn.commit()
+
+    @staticmethod
+    def _ensure_onboarding_column(conn: sqlite3.Connection) -> None:
+        """Add onboarding_completed column if the database was created before this feature."""
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(user_settings)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if 'onboarding_completed' not in columns:
+            cursor.execute("ALTER TABLE user_settings ADD COLUMN onboarding_completed BOOLEAN DEFAULT 0")
             conn.commit()
 
     def clear_all_data(self) -> str:
@@ -460,6 +484,103 @@ class ExpenseManager:
         month_name = calendar.month_name[month]
         return f"💵 Projected income set: ${amount:.2f} from {source} for {month_name} {year}"
     
+    def copy_budget_from_previous_month(self, year: int = None, month: int = None) -> str:
+        """Copy budget plans from the previous month to the current/specified month.
+        
+        Args:
+            year: Target year (defaults to current)
+            month: Target month (defaults to current)
+            
+        Returns:
+            Status message
+        """
+        if year is None:
+            year = datetime.now().year
+        if month is None:
+            month = datetime.now().month
+        
+        # Calculate previous month
+        if month == 1:
+            prev_year = year - 1
+            prev_month = 12
+        else:
+            prev_year = year
+            prev_month = month - 1
+        
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        # Check if current month already has budgets
+        cursor.execute('''
+            SELECT COUNT(*) FROM budget_plans WHERE year = ? AND month = ?
+        ''', (year, month))
+        existing_count = cursor.fetchone()[0]
+        
+        # Get previous month's budgets
+        cursor.execute('''
+            SELECT category, planned_amount FROM budget_plans
+            WHERE year = ? AND month = ?
+        ''', (prev_year, prev_month))
+        prev_budgets = cursor.fetchall()
+        
+        if not prev_budgets:
+            conn.close()
+            prev_month_name = calendar.month_name[prev_month]
+            return f"❌ No budget plans found for {prev_month_name} {prev_year} to copy."
+        
+        # Copy budgets to current month
+        copied_count = 0
+        for category, amount in prev_budgets:
+            cursor.execute('''
+                INSERT OR REPLACE INTO budget_plans (year, month, category, planned_amount)
+                VALUES (?, ?, ?, ?)
+            ''', (year, month, category, amount))
+            copied_count += 1
+        
+        # Also copy projected income
+        cursor.execute('''
+            SELECT source, amount FROM projected_income
+            WHERE year = ? AND month = ?
+        ''', (prev_year, prev_month))
+        prev_income = cursor.fetchall()
+        
+        income_copied = 0
+        for source, amount in prev_income:
+            cursor.execute('''
+                INSERT OR REPLACE INTO projected_income (year, month, source, amount)
+                VALUES (?, ?, ?, ?)
+            ''', (year, month, source, amount))
+            income_copied += 1
+        
+        conn.commit()
+        conn.close()
+        
+        prev_month_name = calendar.month_name[prev_month]
+        curr_month_name = calendar.month_name[month]
+        
+        msg = f"✅ Copied budget from {prev_month_name} to {curr_month_name}:\n"
+        msg += f"• {copied_count} category budgets\n"
+        if income_copied:
+            msg += f"• {income_copied} projected income sources"
+        
+        return msg
+    
+    def has_budget_for_month(self, year: int = None, month: int = None) -> bool:
+        """Check if there are any budget plans for the specified month."""
+        if year is None:
+            year = datetime.now().year
+        if month is None:
+            month = datetime.now().month
+            
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT COUNT(*) FROM budget_plans WHERE year = ? AND month = ?
+        ''', (year, month))
+        count = cursor.fetchone()[0]
+        conn.close()
+        return count > 0
+    
     def get_monthly_plan(self, year: int = None, month: int = None) -> Dict:
         """Get complete monthly financial plan."""
         if year is None:
@@ -623,6 +744,30 @@ class ExpenseManager:
         result = cursor.fetchone()
         conn.close()
         return bool(result[0]) if result else True
+    
+    def is_onboarding_completed(self, chat_id: int) -> bool:
+        """Check if user has completed the onboarding process."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute('SELECT onboarding_completed FROM user_settings WHERE chat_id = ?', (chat_id,))
+        result = cursor.fetchone()
+        conn.close()
+        return bool(result[0]) if result else False
+    
+    def complete_onboarding(self, chat_id: int) -> None:
+        """Mark onboarding as completed for a user."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        # First check if user exists
+        cursor.execute('SELECT id FROM user_settings WHERE chat_id = ?', (chat_id,))
+        if cursor.fetchone():
+            cursor.execute('UPDATE user_settings SET onboarding_completed = 1 WHERE chat_id = ?', (chat_id,))
+        else:
+            cursor.execute('INSERT INTO user_settings (chat_id, onboarding_completed) VALUES (?, 1)', (chat_id,))
+        
+        conn.commit()
+        conn.close()
     
     # ===== Helper Methods =====
     

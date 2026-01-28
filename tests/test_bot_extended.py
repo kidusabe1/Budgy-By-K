@@ -23,17 +23,36 @@ def expense_manager(tmp_path):
 
 
 @pytest.fixture()
-def keyboards(expense_manager):
+def keyboards():
     """Create KeyboardFactory instance."""
-    return KeyboardFactory(expense_manager.CATEGORIES)
+    return KeyboardFactory(ExpenseManager.CATEGORIES)
 
 
 @pytest.fixture()
-def bot_instance(expense_manager, keyboards):
-    """Create BudgetBot instance."""
+def bot_instance(tmp_path):
+    """Create BudgetBot instance with test configuration."""
     config = BotConfig(token="123:TEST")
     viz = VisualizationService()
-    return BudgetBot(expense_manager, config, viz, keyboards)
+    bot = BudgetBot(config, viz, ExpenseManager.CATEGORIES)
+    # Override the DB_DIR to use temp path
+    ExpenseManager.DB_DIR = str(tmp_path / "user_data")
+    return bot
+
+
+@pytest.fixture()
+def test_user_manager(bot_instance, tmp_path):
+    """Get an expense manager for a test user."""
+    # Create a manager for test user
+    manager = bot_instance._get_manager("test_user")
+    return manager
+
+
+def setup_completed_onboarding(bot_instance, chat_id=12345, username="test_user"):
+    """Helper to mark onboarding as complete for a test user."""
+    manager = bot_instance._get_manager(username)
+    manager.register_user(chat_id)
+    manager.complete_onboarding(chat_id)
+    return manager
 
 
 class DummyMessage:
@@ -58,6 +77,13 @@ class DummyMessage:
         return MagicMock()
 
 
+class DummyUser:
+    """Mock user object."""
+    def __init__(self, user_id=12345, username="test_user"):
+        self.id = user_id
+        self.username = username
+
+
 class DummyChat:
     """Mock chat object."""
     def __init__(self, chat_id=12345):
@@ -66,18 +92,20 @@ class DummyChat:
 
 class DummyUpdate:
     """Mock update object for testing."""
-    def __init__(self, chat_id=12345):
+    def __init__(self, chat_id=12345, user_id=12345, username="test_user"):
         self.message = DummyMessage()
         self.effective_chat = DummyChat(chat_id)
+        self.effective_user = DummyUser(user_id, username)
         self.callback_query = None
 
 
 class DummyCallbackQuery:
     """Mock callback query object."""
-    def __init__(self, data, chat_id=12345):
+    def __init__(self, data, chat_id=12345, user_id=12345, username="test_user"):
         self.data = data
         self.message = DummyMessage()
         self.message.chat_id = chat_id
+        self.from_user = DummyUser(user_id, username)
 
     async def answer(self):
         pass
@@ -281,6 +309,9 @@ class TestPhotoHandling:
     @pytest.mark.asyncio
     async def test_photo_with_valid_caption(self, bot_instance):
         """Test photo with valid expense caption."""
+        # Setup completed onboarding
+        manager = setup_completed_onboarding(bot_instance)
+        
         update = DummyUpdate()
         context = DummyContext()
         
@@ -298,12 +329,15 @@ class TestPhotoHandling:
         assert "📎" in response  # Receipt indicator
         
         # Verify stored in DB
-        transactions = bot_instance.expense_manager.get_recent_transactions(1)
+        transactions = manager.get_recent_transactions(1)
         assert transactions[0]['receipt'] == "test_file_id_123"
 
     @pytest.mark.asyncio
     async def test_photo_without_caption(self, bot_instance):
         """Test photo without caption shows help message."""
+        # Setup completed onboarding
+        setup_completed_onboarding(bot_instance)
+        
         update = DummyUpdate()
         context = DummyContext()
         
@@ -321,6 +355,9 @@ class TestPhotoHandling:
     @pytest.mark.asyncio
     async def test_photo_with_invalid_caption(self, bot_instance):
         """Test photo with invalid caption format."""
+        # Setup completed onboarding
+        setup_completed_onboarding(bot_instance)
+        
         update = DummyUpdate()
         context = DummyContext()
         
@@ -338,6 +375,9 @@ class TestPhotoHandling:
     @pytest.mark.asyncio
     async def test_photo_with_unknown_category(self, bot_instance):
         """Test photo with unknown category in caption."""
+        # Setup completed onboarding
+        setup_completed_onboarding(bot_instance)
+        
         update = DummyUpdate()
         context = DummyContext()
         
@@ -360,7 +400,7 @@ class TestBotFlows:
 
     @pytest.mark.asyncio
     async def test_start_command(self, bot_instance):
-        """Test /start command."""
+        """Test /start command for new user."""
         update = DummyUpdate()
         context = DummyContext()
         
@@ -376,7 +416,10 @@ class TestBotFlows:
 
     @pytest.mark.asyncio
     async def test_help_command(self, bot_instance):
-        """Test /help command."""
+        """Test /help command requires onboarding."""
+        # Setup completed onboarding
+        setup_completed_onboarding(bot_instance)
+        
         update = DummyUpdate()
         context = DummyContext()
         
@@ -388,7 +431,10 @@ class TestBotFlows:
 
     @pytest.mark.asyncio
     async def test_today_command(self, bot_instance):
-        """Test /today command."""
+        """Test /today command requires onboarding."""
+        # Setup completed onboarding
+        setup_completed_onboarding(bot_instance)
+        
         update = DummyUpdate()
         context = DummyContext()
         
@@ -400,6 +446,9 @@ class TestBotFlows:
     @pytest.mark.asyncio
     async def test_add_expense_via_text(self, bot_instance):
         """Test adding expense via text message."""
+        # Setup completed onboarding
+        setup_completed_onboarding(bot_instance)
+        
         update = DummyUpdate()
         context = DummyContext()
         update.message.text = "groceries 45.50 weekly shopping"
@@ -414,6 +463,9 @@ class TestBotFlows:
     @pytest.mark.asyncio
     async def test_add_expense_unknown_category(self, bot_instance):
         """Test adding expense with unknown category."""
+        # Setup completed onboarding
+        setup_completed_onboarding(bot_instance)
+        
         update = DummyUpdate()
         context = DummyContext()
         update.message.text = "xyzunknown 25.00"
@@ -426,6 +478,9 @@ class TestBotFlows:
     @pytest.mark.asyncio
     async def test_add_income_flow(self, bot_instance):
         """Test add income flow."""
+        # Setup completed onboarding
+        setup_completed_onboarding(bot_instance)
+        
         update = DummyUpdate()
         context = DummyContext()
         
@@ -442,6 +497,9 @@ class TestBotFlows:
     @pytest.mark.asyncio
     async def test_set_budget_flow(self, bot_instance):
         """Test set budget flow."""
+        # Setup completed onboarding
+        setup_completed_onboarding(bot_instance)
+        
         update = DummyUpdate()
         context = DummyContext()
         
@@ -459,6 +517,9 @@ class TestBotFlows:
     @pytest.mark.asyncio
     async def test_custom_amount_flow(self, bot_instance):
         """Test custom amount entry flow."""
+        # Setup completed onboarding
+        setup_completed_onboarding(bot_instance)
+        
         update = DummyUpdate()
         context = DummyContext()
         
@@ -478,6 +539,9 @@ class TestBotFlows:
     @pytest.mark.asyncio
     async def test_note_entry_flow(self, bot_instance):
         """Test note entry flow."""
+        # Setup completed onboarding
+        setup_completed_onboarding(bot_instance)
+        
         update = DummyUpdate()
         context = DummyContext()
         
@@ -497,6 +561,9 @@ class TestBotFlows:
     @pytest.mark.asyncio
     async def test_invalid_amount_handling(self, bot_instance):
         """Test invalid amount entry."""
+        # Setup completed onboarding
+        setup_completed_onboarding(bot_instance)
+        
         update = DummyUpdate()
         context = DummyContext()
         
@@ -512,6 +579,9 @@ class TestBotFlows:
     @pytest.mark.asyncio
     async def test_session_expired_missing_category(self, bot_instance):
         """Test session expired when category is missing."""
+        # Setup completed onboarding
+        setup_completed_onboarding(bot_instance)
+        
         update = DummyUpdate()
         context = DummyContext()
         
@@ -528,6 +598,9 @@ class TestBotFlows:
     @pytest.mark.asyncio
     async def test_session_expired_missing_amount(self, bot_instance):
         """Test session expired when amount is missing."""
+        # Setup completed onboarding
+        setup_completed_onboarding(bot_instance)
+        
         update = DummyUpdate()
         context = DummyContext()
         
@@ -551,6 +624,7 @@ class TestBotFlows:
             'stage': 'income',
             'year': 2026,
             'month': 1,
+            'user_id': 'test_user',
         }
         update.message.text = "skip"
         
@@ -569,13 +643,15 @@ class TestBotFlows:
             'stage': 'income',
             'year': 2026,
             'month': 1,
+            'user_id': 'test_user',
         }
         update.message.text = "5000"
         
         await bot_instance._handle_onboarding(update, context, "5000")
         
         # Check income was set
-        plan = bot_instance.expense_manager.get_monthly_plan(2026, 1)
+        manager = bot_instance._get_manager('test_user')
+        plan = manager.get_monthly_plan(2026, 1)
         assert plan['total_projected_income'] == 5000.0
 
     @pytest.mark.asyncio
@@ -588,6 +664,7 @@ class TestBotFlows:
             'stage': 'income',
             'year': 2026,
             'month': 1,
+            'user_id': 'test_user',
         }
         update.message.text = "not a number"
         
@@ -609,13 +686,15 @@ class TestBotFlows:
             'category_index': 0,
             'year': 2026,
             'month': 1,
+            'user_id': 'test_user',
         }
         update.message.text = "300"
         
         await bot_instance._handle_onboarding(update, context, "300")
         
         # Check budget was set
-        plan = bot_instance.expense_manager.get_monthly_plan(2026, 1)
+        manager = bot_instance._get_manager('test_user')
+        plan = manager.get_monthly_plan(2026, 1)
         first_category = bot_instance.keyboards.categories[0]
         assert plan['planned_budgets'].get(first_category) == 300.0
         # Should advance to next category
@@ -632,6 +711,7 @@ class TestBotFlows:
             'category_index': 0,
             'year': 2026,
             'month': 1,
+            'user_id': 'test_user',
         }
         update.message.text = "skip"
         
@@ -639,7 +719,8 @@ class TestBotFlows:
         
         # Should advance without setting budget
         assert context.user_data['onboarding']['category_index'] == 1
-        plan = bot_instance.expense_manager.get_monthly_plan(2026, 1)
+        manager = bot_instance._get_manager('test_user')
+        plan = manager.get_monthly_plan(2026, 1)
         first_category = bot_instance.keyboards.categories[0]
         assert first_category not in plan['planned_budgets']
 
@@ -794,6 +875,9 @@ class TestIntegration:
     async def test_complete_expense_flow_guided(self, bot_instance):
         """Test complete guided expense entry flow."""
         context = DummyContext()
+        chat_id = 12345
+        username = 'test_user'
+        setup_completed_onboarding(bot_instance, chat_id, username)
         
         # Step 1: User clicks Add Expense
         update1 = DummyUpdate()
@@ -820,7 +904,8 @@ class TestIntegration:
         await bot_instance.button_callback(update4, context)
         
         # Verify expense was saved
-        transactions = bot_instance.expense_manager.get_all_transactions()
+        manager = bot_instance._get_manager(username)
+        transactions = manager.get_all_transactions()
         assert len(transactions) == 1
         assert transactions[0]['amount'] == 50.0
 
@@ -829,6 +914,9 @@ class TestIntegration:
         """Test complete budget setup flow."""
         context = DummyContext()
         now = datetime.now()
+        chat_id = 12345
+        username = 'test_user'
+        setup_completed_onboarding(bot_instance, chat_id, username)
         
         # Step 1: User clicks Budget Plan
         update1 = DummyUpdate()
@@ -854,16 +942,22 @@ class TestIntegration:
         await bot_instance.handle_text(update4, context)
         
         # Verify budget was set
-        plan = bot_instance.expense_manager.get_monthly_plan(now.year, now.month)
+        manager = bot_instance._get_manager(username)
+        plan = manager.get_monthly_plan(now.year, now.month)
         assert plan['planned_budgets'].get(bot_instance.keyboards.categories[0]) == 300.0
 
     @pytest.mark.asyncio
     async def test_summary_with_expenses(self, bot_instance):
         """Test summary generation with actual expenses."""
+        chat_id = 12345
+        username = 'test_user'
+        setup_completed_onboarding(bot_instance, chat_id, username)
+        
         # Add some expenses
-        bot_instance.expense_manager.add_expense("🛒 Groceries", 100.0)
-        bot_instance.expense_manager.add_expense("🍽️ Dining Out", 50.0)
-        bot_instance.expense_manager.add_expense("🚗 Transportation", 30.0)
+        manager = bot_instance._get_manager(username)
+        manager.add_expense("🛒 Groceries", 100.0)
+        manager.add_expense("🍽️ Dining Out", 50.0)
+        manager.add_expense("🚗 Transportation", 30.0)
         
         update = DummyUpdate()
         context = DummyContext()
