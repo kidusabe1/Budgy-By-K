@@ -169,10 +169,68 @@ class ExpenseManager:
             'user_settings',
         ):
             cursor.execute(f'DELETE FROM {table}')
-        cursor.execute('VACUUM')
         conn.commit()
         conn.close()
+        
+        # VACUUM must be run outside of a transaction
+        conn = sqlite3.connect(self.db_path)
+        conn.execute('VACUUM')
+        conn.close()
         return "🧹 All data cleared."
+
+    def clear_expenses(self) -> str:
+        """Remove all expense transactions."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute('SELECT COUNT(*) FROM transactions')
+        count = cursor.fetchone()[0]
+        cursor.execute('DELETE FROM transactions')
+        conn.commit()
+        conn.close()
+        return f"🗑️ Deleted {count} expense(s)."
+
+    def clear_income(self) -> str:
+        """Remove all income records."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute('SELECT COUNT(*) FROM income')
+        count = cursor.fetchone()[0]
+        cursor.execute('DELETE FROM income')
+        conn.commit()
+        conn.close()
+        return f"🗑️ Deleted {count} income record(s)."
+
+    def clear_budgets(self) -> str:
+        """Remove all budget plans and projected income."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute('SELECT COUNT(*) FROM budget_plans')
+        budget_count = cursor.fetchone()[0]
+        cursor.execute('SELECT COUNT(*) FROM projected_income')
+        income_count = cursor.fetchone()[0]
+        cursor.execute('DELETE FROM budget_plans')
+        cursor.execute('DELETE FROM projected_income')
+        conn.commit()
+        conn.close()
+        return f"🗑️ Deleted {budget_count} budget(s) and {income_count} projected income(s)."
+
+    def delete_last_n(self, n: int) -> str:
+        """Delete the last N expense transactions."""
+        if n <= 0:
+            return "❌ Number must be positive."
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute('SELECT COUNT(*) FROM transactions')
+        total = cursor.fetchone()[0]
+        to_delete = min(n, total)
+        cursor.execute('''
+            DELETE FROM transactions WHERE id IN (
+                SELECT id FROM transactions ORDER BY id DESC LIMIT ?
+            )
+        ''', (to_delete,))
+        conn.commit()
+        conn.close()
+        return f"🗑️ Deleted last {to_delete} expense(s)."
     
     def add_expense(self, category: str, amount: float, note: str = "", receipt_file_id: str = None) -> str:
         """Add an expense to the database."""
@@ -597,6 +655,10 @@ class ExpenseManager:
     def match_category(self, user_input: str) -> Optional[str]:
         """Match user input to a category using aliases and fuzzy matching."""
         user_input_lower = user_input.lower().strip()
+        
+        # Reject empty or whitespace-only input
+        if not user_input_lower:
+            return None
         
         # Check aliases first
         if user_input_lower in self.CATEGORY_ALIASES:

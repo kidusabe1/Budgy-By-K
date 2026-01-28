@@ -275,7 +275,61 @@ class KeyboardFactory:
         status = "✅ ON" if daily_enabled else "❌ OFF"
         keyboard = [
             [InlineKeyboardButton(f"🔔 Daily Report: {status}", callback_data="toggle_daily")],
+            [InlineKeyboardButton("�️ Delete Data", callback_data="menu_delete")],
             [InlineKeyboardButton("🔙 Back to Menu", callback_data="back_menu")],
+        ]
+        return InlineKeyboardMarkup(keyboard)
+
+    @staticmethod
+    def delete_keyboard() -> InlineKeyboardMarkup:
+        keyboard = [
+            [InlineKeyboardButton("💸 Delete All Expenses", callback_data="delete_expenses")],
+            [InlineKeyboardButton("💰 Delete All Income", callback_data="delete_income")],
+            [InlineKeyboardButton("📋 Delete All Budgets", callback_data="delete_budgets")],
+            [InlineKeyboardButton("🔙 Delete Last 5", callback_data="delete_last_5"), InlineKeyboardButton("🔙 Delete Last 10", callback_data="delete_last_10")],
+            [InlineKeyboardButton("⚠️ DELETE EVERYTHING", callback_data="delete_all_confirm")],
+            [InlineKeyboardButton("🔙 Back to Settings", callback_data="menu_settings")],
+        ]
+        return InlineKeyboardMarkup(keyboard)
+
+    @staticmethod
+    def confirm_delete_keyboard(delete_type: str) -> InlineKeyboardMarkup:
+        keyboard = [
+            [InlineKeyboardButton("✅ Yes, Delete", callback_data=f"confirm_{delete_type}")],
+            [InlineKeyboardButton("❌ Cancel", callback_data="menu_delete")],
+        ]
+        return InlineKeyboardMarkup(keyboard)
+
+    @staticmethod
+    def income_source_keyboard() -> InlineKeyboardMarkup:
+        """Keyboard for selecting income source."""
+        keyboard = [
+            [InlineKeyboardButton("💼 Salary", callback_data="inc_src_Salary"), InlineKeyboardButton("💻 Freelance", callback_data="inc_src_Freelance")],
+            [InlineKeyboardButton("🎯 Bonus", callback_data="inc_src_Bonus"), InlineKeyboardButton("💰 Investment", callback_data="inc_src_Investment")],
+            [InlineKeyboardButton("🎁 Gift", callback_data="inc_src_Gift"), InlineKeyboardButton("🔄 Refund", callback_data="inc_src_Refund")],
+            [InlineKeyboardButton("➕ Other", callback_data="inc_src_Other"), InlineKeyboardButton("✏️ Custom", callback_data="inc_src_custom")],
+            [InlineKeyboardButton("❌ Cancel", callback_data="cancel")],
+        ]
+        return InlineKeyboardMarkup(keyboard)
+
+    @staticmethod
+    def income_amount_keyboard() -> InlineKeyboardMarkup:
+        """Keyboard for selecting income amount."""
+        keyboard = [
+            [InlineKeyboardButton("$100", callback_data="inc_amt_100"), InlineKeyboardButton("$250", callback_data="inc_amt_250"), InlineKeyboardButton("$500", callback_data="inc_amt_500")],
+            [InlineKeyboardButton("$1000", callback_data="inc_amt_1000"), InlineKeyboardButton("$1500", callback_data="inc_amt_1500"), InlineKeyboardButton("$2000", callback_data="inc_amt_2000")],
+            [InlineKeyboardButton("$2500", callback_data="inc_amt_2500"), InlineKeyboardButton("$3000", callback_data="inc_amt_3000"), InlineKeyboardButton("$5000", callback_data="inc_amt_5000")],
+            [InlineKeyboardButton("✏️ Custom Amount", callback_data="inc_amt_custom")],
+            [InlineKeyboardButton("❌ Cancel", callback_data="cancel")],
+        ]
+        return InlineKeyboardMarkup(keyboard)
+
+    @staticmethod
+    def income_note_keyboard() -> InlineKeyboardMarkup:
+        """Keyboard for skipping note on income."""
+        keyboard = [
+            [InlineKeyboardButton("⏭️ Skip Note", callback_data="inc_skip_note")],
+            [InlineKeyboardButton("❌ Cancel", callback_data="cancel")],
         ]
         return InlineKeyboardMarkup(keyboard)
 
@@ -583,7 +637,59 @@ class BudgetBot:
         if data == "menu_income":
             context.user_data.clear()
             context.user_data['action'] = 'add_income'
-            await edit_or_send("Send income: `[Source] [Amount] [Note]`", parse_mode='Markdown')
+            await edit_or_send(
+                "💰 *Add Income*\n\nSelect income source:",
+                reply_markup=KeyboardFactory.income_source_keyboard(),
+                parse_mode='Markdown',
+            )
+            return
+
+        # Income source selection
+        if data.startswith("inc_src_"):
+            source = data.split('_', 2)[2]
+            if source == "custom":
+                context.user_data['action'] = 'add_income'
+                context.user_data['awaiting'] = 'income_source'
+                await edit_or_send("✏️ Enter income source name:")
+            else:
+                context.user_data['income_source'] = source
+                context.user_data['action'] = 'add_income'
+                await edit_or_send(
+                    f"Source: *{source}*\n\n💵 Select or enter amount:",
+                    reply_markup=KeyboardFactory.income_amount_keyboard(),
+                    parse_mode='Markdown',
+                )
+            return
+
+        # Income amount selection
+        if data.startswith("inc_amt_"):
+            if 'income_source' not in context.user_data:
+                await edit_or_send("Session expired. Use /menu to restart.")
+                return
+            amount_str = data.split('_')[2]
+            if amount_str == "custom":
+                context.user_data['awaiting'] = 'income_amount'
+                await edit_or_send("✏️ Enter the amount:")
+            else:
+                context.user_data['income_amount'] = float(amount_str)
+                context.user_data['awaiting'] = 'income_note'
+                await edit_or_send(
+                    f"Source: *{context.user_data['income_source']}*\nAmount: *${float(amount_str):.2f}*\n\n📝 Add a note (or skip):",
+                    reply_markup=KeyboardFactory.income_note_keyboard(),
+                    parse_mode='Markdown',
+                )
+            return
+
+        # Skip income note
+        if data == "inc_skip_note":
+            if 'income_source' in context.user_data and 'income_amount' in context.user_data:
+                source = context.user_data['income_source']
+                amount = context.user_data['income_amount']
+                response = self.expense_manager.add_income(source, amount)
+                context.user_data.clear()
+                await edit_or_send(response, reply_markup=self.keyboards.main_menu())
+            else:
+                await edit_or_send("Session expired. Use /menu.")
             return
 
         if data == "menu_recent":
@@ -606,6 +712,95 @@ class BudgetBot:
                 f"Daily report {status}",
                 reply_markup=KeyboardFactory.settings_keyboard(new_state),
             )
+            return
+
+        # Delete menu
+        if data == "menu_delete":
+            await edit_or_send(
+                "🗑️ *Delete Data*\n\nChoose what to delete:",
+                reply_markup=KeyboardFactory.delete_keyboard(),
+                parse_mode='Markdown',
+            )
+            return
+
+        # Delete confirmation prompts
+        if data == "delete_expenses":
+            await edit_or_send(
+                "⚠️ *Delete All Expenses?*\n\nThis will permanently delete all your expense transactions.",
+                reply_markup=KeyboardFactory.confirm_delete_keyboard("expenses"),
+                parse_mode='Markdown',
+            )
+            return
+
+        if data == "delete_income":
+            await edit_or_send(
+                "⚠️ *Delete All Income?*\n\nThis will permanently delete all your income records.",
+                reply_markup=KeyboardFactory.confirm_delete_keyboard("income"),
+                parse_mode='Markdown',
+            )
+            return
+
+        if data == "delete_budgets":
+            await edit_or_send(
+                "⚠️ *Delete All Budgets?*\n\nThis will permanently delete all your budget plans and projected income.",
+                reply_markup=KeyboardFactory.confirm_delete_keyboard("budgets"),
+                parse_mode='Markdown',
+            )
+            return
+
+        if data == "delete_last_5":
+            await edit_or_send(
+                "⚠️ *Delete Last 5 Expenses?*\n\nThis will permanently delete your 5 most recent expenses.",
+                reply_markup=KeyboardFactory.confirm_delete_keyboard("last_5"),
+                parse_mode='Markdown',
+            )
+            return
+
+        if data == "delete_last_10":
+            await edit_or_send(
+                "⚠️ *Delete Last 10 Expenses?*\n\nThis will permanently delete your 10 most recent expenses.",
+                reply_markup=KeyboardFactory.confirm_delete_keyboard("last_10"),
+                parse_mode='Markdown',
+            )
+            return
+
+        if data == "delete_all_confirm":
+            await edit_or_send(
+                "🚨 *DELETE EVERYTHING?*\n\n⚠️ This will permanently delete ALL your data:\n• All expenses\n• All income\n• All budgets\n• All settings\n\n*This cannot be undone!*",
+                reply_markup=KeyboardFactory.confirm_delete_keyboard("all"),
+                parse_mode='Markdown',
+            )
+            return
+
+        # Confirmed deletions
+        if data == "confirm_expenses":
+            result = self.expense_manager.clear_expenses()
+            await edit_or_send(result, reply_markup=KeyboardFactory.delete_keyboard())
+            return
+
+        if data == "confirm_income":
+            result = self.expense_manager.clear_income()
+            await edit_or_send(result, reply_markup=KeyboardFactory.delete_keyboard())
+            return
+
+        if data == "confirm_budgets":
+            result = self.expense_manager.clear_budgets()
+            await edit_or_send(result, reply_markup=KeyboardFactory.delete_keyboard())
+            return
+
+        if data == "confirm_last_5":
+            result = self.expense_manager.delete_last_n(5)
+            await edit_or_send(result, reply_markup=KeyboardFactory.delete_keyboard())
+            return
+
+        if data == "confirm_last_10":
+            result = self.expense_manager.delete_last_n(10)
+            await edit_or_send(result, reply_markup=KeyboardFactory.delete_keyboard())
+            return
+
+        if data == "confirm_all":
+            result = self.expense_manager.clear_all_data()
+            await edit_or_send(result, reply_markup=self.keyboards.main_menu())
             return
 
         if data == "cancel":
@@ -718,7 +913,46 @@ class BudgetBot:
             await update.message.reply_text(response, reply_markup=self.keyboards.main_menu())
             return
 
-        if user_state.get('action') == 'add_income':
+        # Guided income flow - custom source
+        if user_state.get('awaiting') == 'income_source':
+            user_state['income_source'] = text
+            user_state['awaiting'] = None
+            await update.message.reply_text(
+                f"Source: *{text}*\n\n💵 Select or enter amount:",
+                reply_markup=KeyboardFactory.income_amount_keyboard(),
+                parse_mode='Markdown',
+            )
+            return
+
+        # Guided income flow - custom amount
+        if user_state.get('awaiting') == 'income_amount':
+            try:
+                amount = float(text.replace('$', '').replace(',', ''))
+                user_state['income_amount'] = amount
+                user_state['awaiting'] = 'income_note'
+                await update.message.reply_text(
+                    f"Source: *{user_state.get('income_source')}*\nAmount: *${amount:.2f}*\n\n📝 Add a note (or skip):",
+                    reply_markup=KeyboardFactory.income_note_keyboard(),
+                    parse_mode='Markdown',
+                )
+            except ValueError:
+                await update.message.reply_text("❌ Invalid amount. Enter a number.")
+            return
+
+        # Guided income flow - note
+        if user_state.get('awaiting') == 'income_note':
+            source = user_state.get('income_source')
+            amount = user_state.get('income_amount')
+            if source is None or amount is None:
+                await update.message.reply_text("Session expired. Use /menu.")
+                return
+            response = self.expense_manager.add_income(source, amount, text)
+            user_state.clear()
+            await update.message.reply_text(response, reply_markup=self.keyboards.main_menu())
+            return
+
+        # Legacy text-based income entry (fallback)
+        if user_state.get('action') == 'add_income' and not user_state.get('income_source'):
             try:
                 source, amount, note = ExpenseParser.parse_income(text)
                 response = self.expense_manager.add_income(source, amount, note)
