@@ -1,0 +1,35 @@
+# Databases
+*.db
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Pytest
+.pytest_cache/
+
+# macOS
+.DS_Store
+
+# Logs
+logs/
+
+# Editor / IDE
+.vscode/
+.idea/
+
+# Excel temp lock files
+~$*.xlsx
+
+# User data (per-user databases)
+user_data/
