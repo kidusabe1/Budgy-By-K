@@ -295,13 +295,13 @@ class ExpenseManager:
     def get_summary(self, timeframe: str = "day") -> Tuple[str, Dict]:
         """Get spending summary for specified timeframe."""
         if timeframe == "day":
-            date_filter = self._get_today_filter()
+            date_filter, params = self._get_today_filter()
             header = "📅 Today's Spending"
         elif timeframe == "week":
-            date_filter = self._get_week_filter()
+            date_filter, params = self._get_week_filter()
             header = "📊 This Week's Spending"
         elif timeframe == "month":
-            date_filter = self._get_month_filter()
+            date_filter, params = self._get_month_filter()
             header = "📈 This Month's Spending"
         else:
             return "Invalid timeframe.", {}
@@ -310,7 +310,7 @@ class ExpenseManager:
             cursor = conn.cursor()
 
             # Get total
-            cursor.execute(f'SELECT SUM(amount) FROM transactions WHERE {date_filter}')
+            cursor.execute(f'SELECT SUM(amount) FROM transactions WHERE {date_filter}', params)
             total = cursor.fetchone()[0] or 0
 
             # Get breakdown by category
@@ -319,7 +319,7 @@ class ExpenseManager:
                 WHERE {date_filter}
                 GROUP BY category
                 ORDER BY SUM(amount) DESC
-            ''')
+            ''', params)
 
             rows = cursor.fetchall()
 
@@ -340,9 +340,9 @@ class ExpenseManager:
     def get_daily_breakdown(self, timeframe: str = "week") -> List[Tuple[str, float]]:
         """Get daily spending breakdown for charts."""
         if timeframe == "week":
-            date_filter = self._get_week_filter()
+            date_filter, params = self._get_week_filter()
         else:
-            date_filter = self._get_month_filter()
+            date_filter, params = self._get_month_filter()
 
         with self._connect() as conn:
             cursor = conn.cursor()
@@ -352,7 +352,7 @@ class ExpenseManager:
                 WHERE {date_filter}
                 GROUP BY DATE(date)
                 ORDER BY day
-            ''')
+            ''', params)
             rows = cursor.fetchall()
         return rows
     
@@ -731,24 +731,25 @@ class ExpenseManager:
         return '█' * filled_length + '░' * (length - filled_length)
     
     @staticmethod
-    def _get_today_filter() -> str:
-        """Get SQL filter for today's date."""
+    def _get_today_filter() -> Tuple[str, Tuple]:
+        """Get SQL filter and params for today's date."""
         today = datetime.now().strftime('%Y-%m-%d')
-        return f"DATE(date) = '{today}'"
-    
+        return "DATE(date) = ?", (today,)
+
     @staticmethod
-    def _get_week_filter() -> str:
-        """Get SQL filter for current week (Monday to Sunday)."""
+    def _get_week_filter() -> Tuple[str, Tuple]:
+        """Get SQL filter and params for current week (Monday to Sunday)."""
         today = datetime.now()
         monday = today - timedelta(days=today.weekday())
         monday_str = monday.strftime('%Y-%m-%d')
-        return f"DATE(date) >= '{monday_str}'"
-    
+        return "DATE(date) >= ?", (monday_str,)
+
     @staticmethod
-    def _get_month_filter() -> str:
-        """Get SQL filter for current month."""
+    def _get_month_filter() -> Tuple[str, Tuple]:
+        """Get SQL filter and params for current month."""
         today = datetime.now()
-        return f"strftime('%Y-%m', date) = '{today.year:04d}-{today.month:02d}'"
+        month_str = f"{today.year:04d}-{today.month:02d}"
+        return "strftime('%Y-%m', date) = ?", (month_str,)
     
     def match_category(self, user_input: str) -> Optional[str]:
         """Match user input to a category using aliases and fuzzy matching."""
