@@ -2,6 +2,7 @@ import sqlite3
 import csv
 import io
 import calendar
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Dict, Tuple, Optional
@@ -161,6 +162,15 @@ class ExpenseManager:
         self._ensure_onboarding_column(conn)
         conn.close()
 
+    @contextmanager
+    def _connect(self):
+        """Context manager for database connections. Ensures connections are always closed."""
+        conn = sqlite3.connect(self.db_path)
+        try:
+            yield conn
+        finally:
+            conn.close()
+
     @staticmethod
     def _ensure_receipt_column(conn: sqlite3.Connection) -> None:
         """Add receipt_file_id column if the database was created before receipts existed."""
@@ -183,94 +193,85 @@ class ExpenseManager:
 
     def clear_all_data(self) -> str:
         """Remove all user data from every table and vacuum the database."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        for table in (
-            'transactions',
-            'income',
-            'budget_plans',
-            'projected_income',
-            'user_settings',
-        ):
-            cursor.execute(f'DELETE FROM {table}')
-        conn.commit()
-        conn.close()
-        
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            for table in (
+                'transactions',
+                'income',
+                'budget_plans',
+                'projected_income',
+                'user_settings',
+            ):
+                cursor.execute(f'DELETE FROM {table}')
+            conn.commit()
+
         # VACUUM must be run outside of a transaction
-        conn = sqlite3.connect(self.db_path)
-        conn.execute('VACUUM')
-        conn.close()
+        with self._connect() as conn:
+            conn.execute('VACUUM')
         return "🧹 All data cleared."
 
     def clear_expenses(self) -> str:
         """Remove all expense transactions."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute('SELECT COUNT(*) FROM transactions')
-        count = cursor.fetchone()[0]
-        cursor.execute('DELETE FROM transactions')
-        conn.commit()
-        conn.close()
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT COUNT(*) FROM transactions')
+            count = cursor.fetchone()[0]
+            cursor.execute('DELETE FROM transactions')
+            conn.commit()
         return f"🗑️ Deleted {count} expense(s)."
 
     def clear_income(self) -> str:
         """Remove all income records."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute('SELECT COUNT(*) FROM income')
-        count = cursor.fetchone()[0]
-        cursor.execute('DELETE FROM income')
-        conn.commit()
-        conn.close()
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT COUNT(*) FROM income')
+            count = cursor.fetchone()[0]
+            cursor.execute('DELETE FROM income')
+            conn.commit()
         return f"🗑️ Deleted {count} income record(s)."
 
     def clear_budgets(self) -> str:
         """Remove all budget plans and projected income."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute('SELECT COUNT(*) FROM budget_plans')
-        budget_count = cursor.fetchone()[0]
-        cursor.execute('SELECT COUNT(*) FROM projected_income')
-        income_count = cursor.fetchone()[0]
-        cursor.execute('DELETE FROM budget_plans')
-        cursor.execute('DELETE FROM projected_income')
-        conn.commit()
-        conn.close()
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT COUNT(*) FROM budget_plans')
+            budget_count = cursor.fetchone()[0]
+            cursor.execute('SELECT COUNT(*) FROM projected_income')
+            income_count = cursor.fetchone()[0]
+            cursor.execute('DELETE FROM budget_plans')
+            cursor.execute('DELETE FROM projected_income')
+            conn.commit()
         return f"🗑️ Deleted {budget_count} budget(s) and {income_count} projected income(s)."
 
     def delete_last_n(self, n: int) -> str:
         """Delete the last N expense transactions."""
         if n <= 0:
             return "❌ Number must be positive."
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute('SELECT COUNT(*) FROM transactions')
-        total = cursor.fetchone()[0]
-        to_delete = min(n, total)
-        cursor.execute('''
-            DELETE FROM transactions WHERE id IN (
-                SELECT id FROM transactions ORDER BY id DESC LIMIT ?
-            )
-        ''', (to_delete,))
-        conn.commit()
-        conn.close()
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT COUNT(*) FROM transactions')
+            total = cursor.fetchone()[0]
+            to_delete = min(n, total)
+            cursor.execute('''
+                DELETE FROM transactions WHERE id IN (
+                    SELECT id FROM transactions ORDER BY id DESC LIMIT ?
+                )
+            ''', (to_delete,))
+            conn.commit()
         return f"🗑️ Deleted last {to_delete} expense(s)."
     
     def add_expense(self, category: str, amount: float, note: str = "", receipt_file_id: str = None) -> str:
         """Add an expense to the database."""
         if amount <= 0:
             return "❌ Amount must be positive."
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            INSERT INTO transactions (category, amount, note, date, receipt_file_id)
-            VALUES (?, ?, ?, datetime('now', 'localtime'), ?)
-        ''', (category, amount, note, receipt_file_id))
-        
-        conn.commit()
-        conn.close()
-        
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO transactions (category, amount, note, date, receipt_file_id)
+                VALUES (?, ?, ?, datetime('now', 'localtime'), ?)
+            ''', (category, amount, note, receipt_file_id))
+            conn.commit()
+
         note_text = f" ({note})" if note else ""
         receipt_text = " 📎" if receipt_file_id else ""
         return f"✅ Saved: ${amount:.2f} to {category}{note_text}{receipt_text}"
@@ -279,26 +280,20 @@ class ExpenseManager:
         """Add income to the database."""
         if amount <= 0:
             return "❌ Amount must be positive."
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            INSERT INTO income (source, amount, note, date, is_projected)
-            VALUES (?, ?, ?, datetime('now', 'localtime'), ?)
-        ''', (source, amount, note, is_projected))
-        
-        conn.commit()
-        conn.close()
-        
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO income (source, amount, note, date, is_projected)
+                VALUES (?, ?, ?, datetime('now', 'localtime'), ?)
+            ''', (source, amount, note, is_projected))
+            conn.commit()
+
         income_type = "projected " if is_projected else ""
         note_text = f" ({note})" if note else ""
         return f"💰 Added {income_type}income: ${amount:.2f} from {source}{note_text}"
     
     def get_summary(self, timeframe: str = "day") -> Tuple[str, Dict]:
         """Get spending summary for specified timeframe."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
         if timeframe == "day":
             date_filter = self._get_today_filter()
             header = "📅 Today's Spending"
@@ -310,109 +305,98 @@ class ExpenseManager:
             header = "📈 This Month's Spending"
         else:
             return "Invalid timeframe.", {}
-        
-        # Get total
-        cursor.execute(f'SELECT SUM(amount) FROM transactions WHERE {date_filter}')
-        total = cursor.fetchone()[0] or 0
-        
-        # Get breakdown by category
-        cursor.execute(f'''
-            SELECT category, SUM(amount) FROM transactions 
-            WHERE {date_filter}
-            GROUP BY category
-            ORDER BY SUM(amount) DESC
-        ''')
-        
-        rows = cursor.fetchall()
-        conn.close()
-        
+
+        with self._connect() as conn:
+            cursor = conn.cursor()
+
+            # Get total
+            cursor.execute(f'SELECT SUM(amount) FROM transactions WHERE {date_filter}')
+            total = cursor.fetchone()[0] or 0
+
+            # Get breakdown by category
+            cursor.execute(f'''
+                SELECT category, SUM(amount) FROM transactions
+                WHERE {date_filter}
+                GROUP BY category
+                ORDER BY SUM(amount) DESC
+            ''')
+
+            rows = cursor.fetchall()
+
         # Build data for charts
         chart_data = {cat: amt for cat, amt in rows}
-        
+
         if not rows:
             return f"{header}: $0.00\n📭 No expenses recorded.", {}
-        
+
         summary = f"{header}: ${total:.2f}\n{'─' * 25}\n"
         for category, amount in rows:
             percentage = (amount / total * 100) if total > 0 else 0
             bar = self._create_progress_bar(percentage)
             summary += f"{category}\n  ${amount:.2f} ({percentage:.1f}%) {bar}\n"
-        
+
         return summary.strip(), chart_data
     
     def get_daily_breakdown(self, timeframe: str = "week") -> List[Tuple[str, float]]:
         """Get daily spending breakdown for charts."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
         if timeframe == "week":
             date_filter = self._get_week_filter()
         else:
             date_filter = self._get_month_filter()
-        
-        cursor.execute(f'''
-            SELECT DATE(date) as day, SUM(amount) 
-            FROM transactions 
-            WHERE {date_filter}
-            GROUP BY DATE(date)
-            ORDER BY day
-        ''')
-        
-        rows = cursor.fetchall()
-        conn.close()
+
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(f'''
+                SELECT DATE(date) as day, SUM(amount)
+                FROM transactions
+                WHERE {date_filter}
+                GROUP BY DATE(date)
+                ORDER BY day
+            ''')
+            rows = cursor.fetchall()
         return rows
     
     def get_category_trend(self, category: str, months: int = 3) -> List[Tuple[str, float]]:
         """Get spending trend for a category over months."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            SELECT strftime('%Y-%m', date) as month, SUM(amount)
-            FROM transactions
-            WHERE category = ? AND date >= date('now', ?)
-            GROUP BY month
-            ORDER BY month
-        ''', (category, f'-{months} months'))
-        
-        rows = cursor.fetchall()
-        conn.close()
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT strftime('%Y-%m', date) as month, SUM(amount)
+                FROM transactions
+                WHERE category = ? AND date >= date('now', ?)
+                GROUP BY month
+                ORDER BY month
+            ''', (category, f'-{months} months'))
+            rows = cursor.fetchall()
         return rows
     
     def delete_last(self) -> str:
         """Delete the most recently inserted expense entry (highest id)."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT id, amount, category, note FROM transactions ORDER BY id DESC LIMIT 1')
+            result = cursor.fetchone()
 
-        cursor.execute('SELECT id, amount, category, note FROM transactions ORDER BY id DESC LIMIT 1')
-        result = cursor.fetchone()
+            if not result:
+                return "❌ No expenses to delete."
 
-        if not result:
-            conn.close()
-            return "❌ No expenses to delete."
-
-        last_id, amount, category, note = result
-        cursor.execute('DELETE FROM transactions WHERE id = ?', (last_id,))
-
-        conn.commit()
-        conn.close()
+            last_id, amount, category, note = result
+            cursor.execute('DELETE FROM transactions WHERE id = ?', (last_id,))
+            conn.commit()
 
         note_text = f" ({note})" if note else ""
         return f"🗑️ Deleted: ${amount:.2f} from {category}{note_text}"
     
     def get_recent_transactions(self, limit: int = 10) -> List[Dict]:
         """Get recent transactions."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            SELECT id, date, category, amount, note, receipt_file_id 
-            FROM transactions ORDER BY date DESC LIMIT ?
-        ''', (limit,))
-        
-        rows = cursor.fetchall()
-        conn.close()
-        
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT id, date, category, amount, note, receipt_file_id
+                FROM transactions ORDER BY date DESC LIMIT ?
+            ''', (limit,))
+            rows = cursor.fetchall()
+
         transactions = []
         for row in rows:
             transactions.append({
@@ -427,23 +411,21 @@ class ExpenseManager:
     
     def export_to_csv(self) -> Optional[str]:
         """Export all transactions to a CSV file."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute('SELECT date, category, amount, note FROM transactions ORDER BY date DESC')
-        rows = cursor.fetchall()
-        conn.close()
-        
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT date, category, amount, note FROM transactions ORDER BY date DESC')
+            rows = cursor.fetchall()
+
         if not rows:
             return None
-        
+
         filename = f"expenses_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-        
+
         with open(filename, 'w', newline='') as f:
             writer = csv.writer(f)
             writer.writerow(['Date', 'Category', 'Amount', 'Note'])
             writer.writerows(rows)
-        
+
         return filename
     
     # ===== Budget Planning Methods =====
@@ -452,17 +434,14 @@ class ExpenseManager:
         """Set budget for a category in a specific month."""
         if amount < 0:
             return "❌ Budget amount cannot be negative."
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            INSERT OR REPLACE INTO budget_plans (year, month, category, planned_amount)
-            VALUES (?, ?, ?, ?)
-        ''', (year, month, category, amount))
-        
-        conn.commit()
-        conn.close()
-        
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT OR REPLACE INTO budget_plans (year, month, category, planned_amount)
+                VALUES (?, ?, ?, ?)
+            ''', (year, month, category, amount))
+            conn.commit()
+
         month_name = calendar.month_name[month]
         return f"📋 Budget set: ${amount:.2f} for {category} in {month_name} {year}"
     
@@ -470,27 +449,24 @@ class ExpenseManager:
         """Set projected income for a month."""
         if amount <= 0:
             return "❌ Amount must be positive."
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            INSERT OR REPLACE INTO projected_income (year, month, source, amount)
-            VALUES (?, ?, ?, ?)
-        ''', (year, month, source, amount))
-        
-        conn.commit()
-        conn.close()
-        
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT OR REPLACE INTO projected_income (year, month, source, amount)
+                VALUES (?, ?, ?, ?)
+            ''', (year, month, source, amount))
+            conn.commit()
+
         month_name = calendar.month_name[month]
         return f"💵 Projected income set: ${amount:.2f} from {source} for {month_name} {year}"
     
     def copy_budget_from_previous_month(self, year: int = None, month: int = None) -> str:
         """Copy budget plans from the previous month to the current/specified month.
-        
+
         Args:
             year: Target year (defaults to current)
             month: Target month (defaults to current)
-            
+
         Returns:
             Status message
         """
@@ -498,7 +474,7 @@ class ExpenseManager:
             year = datetime.now().year
         if month is None:
             month = datetime.now().month
-        
+
         # Calculate previous month
         if month == 1:
             prev_year = year - 1
@@ -506,63 +482,55 @@ class ExpenseManager:
         else:
             prev_year = year
             prev_month = month - 1
-        
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        # Check if current month already has budgets
-        cursor.execute('''
-            SELECT COUNT(*) FROM budget_plans WHERE year = ? AND month = ?
-        ''', (year, month))
-        existing_count = cursor.fetchone()[0]
-        
-        # Get previous month's budgets
-        cursor.execute('''
-            SELECT category, planned_amount FROM budget_plans
-            WHERE year = ? AND month = ?
-        ''', (prev_year, prev_month))
-        prev_budgets = cursor.fetchall()
-        
-        if not prev_budgets:
-            conn.close()
-            prev_month_name = calendar.month_name[prev_month]
-            return f"❌ No budget plans found for {prev_month_name} {prev_year} to copy."
-        
-        # Copy budgets to current month
-        copied_count = 0
-        for category, amount in prev_budgets:
+
+        with self._connect() as conn:
+            cursor = conn.cursor()
+
+            # Get previous month's budgets
             cursor.execute('''
-                INSERT OR REPLACE INTO budget_plans (year, month, category, planned_amount)
-                VALUES (?, ?, ?, ?)
-            ''', (year, month, category, amount))
-            copied_count += 1
-        
-        # Also copy projected income
-        cursor.execute('''
-            SELECT source, amount FROM projected_income
-            WHERE year = ? AND month = ?
-        ''', (prev_year, prev_month))
-        prev_income = cursor.fetchall()
-        
-        income_copied = 0
-        for source, amount in prev_income:
+                SELECT category, planned_amount FROM budget_plans
+                WHERE year = ? AND month = ?
+            ''', (prev_year, prev_month))
+            prev_budgets = cursor.fetchall()
+
+            if not prev_budgets:
+                prev_month_name = calendar.month_name[prev_month]
+                return f"❌ No budget plans found for {prev_month_name} {prev_year} to copy."
+
+            # Copy budgets to current month
+            copied_count = 0
+            for category, amount in prev_budgets:
+                cursor.execute('''
+                    INSERT OR REPLACE INTO budget_plans (year, month, category, planned_amount)
+                    VALUES (?, ?, ?, ?)
+                ''', (year, month, category, amount))
+                copied_count += 1
+
+            # Also copy projected income
             cursor.execute('''
-                INSERT OR REPLACE INTO projected_income (year, month, source, amount)
-                VALUES (?, ?, ?, ?)
-            ''', (year, month, source, amount))
-            income_copied += 1
-        
-        conn.commit()
-        conn.close()
-        
+                SELECT source, amount FROM projected_income
+                WHERE year = ? AND month = ?
+            ''', (prev_year, prev_month))
+            prev_income = cursor.fetchall()
+
+            income_copied = 0
+            for source, amount in prev_income:
+                cursor.execute('''
+                    INSERT OR REPLACE INTO projected_income (year, month, source, amount)
+                    VALUES (?, ?, ?, ?)
+                ''', (year, month, source, amount))
+                income_copied += 1
+
+            conn.commit()
+
         prev_month_name = calendar.month_name[prev_month]
         curr_month_name = calendar.month_name[month]
-        
+
         msg = f"✅ Copied budget from {prev_month_name} to {curr_month_name}:\n"
         msg += f"• {copied_count} category budgets\n"
         if income_copied:
             msg += f"• {income_copied} projected income sources"
-        
+
         return msg
     
     def has_budget_for_month(self, year: int = None, month: int = None) -> bool:
@@ -571,14 +539,13 @@ class ExpenseManager:
             year = datetime.now().year
         if month is None:
             month = datetime.now().month
-            
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT COUNT(*) FROM budget_plans WHERE year = ? AND month = ?
-        ''', (year, month))
-        count = cursor.fetchone()[0]
-        conn.close()
+
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT COUNT(*) FROM budget_plans WHERE year = ? AND month = ?
+            ''', (year, month))
+            count = cursor.fetchone()[0]
         return count > 0
     
     def get_monthly_plan(self, year: int = None, month: int = None) -> Dict:
@@ -587,43 +554,42 @@ class ExpenseManager:
             year = datetime.now().year
         if month is None:
             month = datetime.now().month
-        
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        # Get planned budgets
-        cursor.execute('''
-            SELECT category, planned_amount FROM budget_plans
-            WHERE year = ? AND month = ?
-        ''', (year, month))
-        planned_budgets = {row[0]: row[1] for row in cursor.fetchall()}
-        
-        # Get actual spending
-        month_filter = f"strftime('%Y-%m', date) = '{year:04d}-{month:02d}'"
-        cursor.execute(f'''
-            SELECT category, SUM(amount) FROM transactions
-            WHERE {month_filter}
-            GROUP BY category
-        ''')
-        actual_spending = {row[0]: row[1] for row in cursor.fetchall()}
-        
-        # Get projected income
-        cursor.execute('''
-            SELECT source, amount FROM projected_income
-            WHERE year = ? AND month = ?
-        ''', (year, month))
-        projected_income = {row[0]: row[1] for row in cursor.fetchall()}
-        
-        # Get actual income
-        cursor.execute(f'''
-            SELECT source, SUM(amount) FROM income
-            WHERE {month_filter} AND is_projected = 0
-            GROUP BY source
-        ''')
-        actual_income = {row[0]: row[1] for row in cursor.fetchall()}
-        
-        conn.close()
-        
+
+        month_str = f"{year:04d}-{month:02d}"
+
+        with self._connect() as conn:
+            cursor = conn.cursor()
+
+            # Get planned budgets
+            cursor.execute('''
+                SELECT category, planned_amount FROM budget_plans
+                WHERE year = ? AND month = ?
+            ''', (year, month))
+            planned_budgets = {row[0]: row[1] for row in cursor.fetchall()}
+
+            # Get actual spending
+            cursor.execute('''
+                SELECT category, SUM(amount) FROM transactions
+                WHERE strftime('%Y-%m', date) = ?
+                GROUP BY category
+            ''', (month_str,))
+            actual_spending = {row[0]: row[1] for row in cursor.fetchall()}
+
+            # Get projected income
+            cursor.execute('''
+                SELECT source, amount FROM projected_income
+                WHERE year = ? AND month = ?
+            ''', (year, month))
+            projected_income = {row[0]: row[1] for row in cursor.fetchall()}
+
+            # Get actual income
+            cursor.execute('''
+                SELECT source, SUM(amount) FROM income
+                WHERE strftime('%Y-%m', date) = ? AND is_projected = 0
+                GROUP BY source
+            ''', (month_str,))
+            actual_income = {row[0]: row[1] for row in cursor.fetchall()}
+
         return {
             'year': year,
             'month': month,
@@ -696,78 +662,65 @@ class ExpenseManager:
     
     def register_user(self, chat_id: int) -> None:
         """Register a user for scheduled reports."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            INSERT OR IGNORE INTO user_settings (chat_id) VALUES (?)
-        ''', (chat_id,))
-        
-        conn.commit()
-        conn.close()
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT OR IGNORE INTO user_settings (chat_id) VALUES (?)
+            ''', (chat_id,))
+            conn.commit()
     
     def get_all_registered_users(self) -> List[int]:
         """Get all registered chat IDs for scheduled reports."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute('SELECT chat_id FROM user_settings WHERE daily_report_enabled = 1')
-        rows = cursor.fetchall()
-        conn.close()
-        
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT chat_id FROM user_settings WHERE daily_report_enabled = 1')
+            rows = cursor.fetchall()
         return [row[0] for row in rows]
     
     def toggle_daily_report(self, chat_id: int) -> bool:
         """Toggle daily report for a user. Returns new state."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute('SELECT daily_report_enabled FROM user_settings WHERE chat_id = ?', (chat_id,))
-        result = cursor.fetchone()
-        
-        if result:
-            new_state = not result[0]
-            cursor.execute('UPDATE user_settings SET daily_report_enabled = ? WHERE chat_id = ?', (new_state, chat_id))
-        else:
-            new_state = True
-            cursor.execute('INSERT INTO user_settings (chat_id, daily_report_enabled) VALUES (?, ?)', (chat_id, new_state))
-        
-        conn.commit()
-        conn.close()
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT daily_report_enabled FROM user_settings WHERE chat_id = ?', (chat_id,))
+            result = cursor.fetchone()
+
+            if result:
+                new_state = not result[0]
+                cursor.execute('UPDATE user_settings SET daily_report_enabled = ? WHERE chat_id = ?', (new_state, chat_id))
+            else:
+                new_state = True
+                cursor.execute('INSERT INTO user_settings (chat_id, daily_report_enabled) VALUES (?, ?)', (chat_id, new_state))
+
+            conn.commit()
         return new_state
 
     def is_daily_report_enabled(self, chat_id: int) -> bool:
         """Return whether daily reports are enabled for a user."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute('SELECT daily_report_enabled FROM user_settings WHERE chat_id = ?', (chat_id,))
-        result = cursor.fetchone()
-        conn.close()
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT daily_report_enabled FROM user_settings WHERE chat_id = ?', (chat_id,))
+            result = cursor.fetchone()
         return bool(result[0]) if result else True
     
     def is_onboarding_completed(self, chat_id: int) -> bool:
         """Check if user has completed the onboarding process."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute('SELECT onboarding_completed FROM user_settings WHERE chat_id = ?', (chat_id,))
-        result = cursor.fetchone()
-        conn.close()
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT onboarding_completed FROM user_settings WHERE chat_id = ?', (chat_id,))
+            result = cursor.fetchone()
         return bool(result[0]) if result else False
     
     def complete_onboarding(self, chat_id: int) -> None:
         """Mark onboarding as completed for a user."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        # First check if user exists
-        cursor.execute('SELECT id FROM user_settings WHERE chat_id = ?', (chat_id,))
-        if cursor.fetchone():
-            cursor.execute('UPDATE user_settings SET onboarding_completed = 1 WHERE chat_id = ?', (chat_id,))
-        else:
-            cursor.execute('INSERT INTO user_settings (chat_id, onboarding_completed) VALUES (?, 1)', (chat_id,))
-        
-        conn.commit()
-        conn.close()
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            # First check if user exists
+            cursor.execute('SELECT id FROM user_settings WHERE chat_id = ?', (chat_id,))
+            if cursor.fetchone():
+                cursor.execute('UPDATE user_settings SET onboarding_completed = 1 WHERE chat_id = ?', (chat_id,))
+            else:
+                cursor.execute('INSERT INTO user_settings (chat_id, onboarding_completed) VALUES (?, 1)', (chat_id,))
+            conn.commit()
     
     # ===== Helper Methods =====
     
@@ -826,13 +779,11 @@ class ExpenseManager:
     
     def get_all_transactions(self) -> List[Dict]:
         """Get all transactions from the database."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute('SELECT id, date, category, amount, note FROM transactions ORDER BY date DESC')
-        rows = cursor.fetchall()
-        conn.close()
-        
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT id, date, category, amount, note FROM transactions ORDER BY date DESC')
+            rows = cursor.fetchall()
+
         transactions = []
         for row in rows:
             transactions.append({
@@ -842,5 +793,5 @@ class ExpenseManager:
                 'amount': row[3],
                 'note': row[4]
             })
-        
+
         return transactions
