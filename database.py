@@ -1,7 +1,9 @@
+import os
 import sqlite3
 import csv
 import io
 import calendar
+import tempfile
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -410,7 +412,7 @@ class ExpenseManager:
         return transactions
     
     def export_to_csv(self) -> Optional[str]:
-        """Export all transactions to a CSV file."""
+        """Export all transactions to a CSV file using a temp file."""
         with self._connect() as conn:
             cursor = conn.cursor()
             cursor.execute('SELECT date, category, amount, note FROM transactions ORDER BY date DESC')
@@ -419,14 +421,18 @@ class ExpenseManager:
         if not rows:
             return None
 
-        filename = f"expenses_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        suffix = f"_expenses_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        fd, filepath = tempfile.mkstemp(suffix=suffix)
+        try:
+            with os.fdopen(fd, 'w', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(['Date', 'Category', 'Amount', 'Note'])
+                writer.writerows(rows)
+        except Exception:
+            os.close(fd)
+            raise
 
-        with open(filename, 'w', newline='') as f:
-            writer = csv.writer(f)
-            writer.writerow(['Date', 'Category', 'Amount', 'Note'])
-            writer.writerows(rows)
-
-        return filename
+        return filepath
     
     # ===== Budget Planning Methods =====
     
