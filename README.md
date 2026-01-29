@@ -155,8 +155,16 @@ My_Budget/
 ├── bot.py              # Main bot with handlers & visualizations
 ├── database.py         # Database manager (SQLite)
 ├── requirements.txt    # Python dependencies
-├── expenses.db         # SQLite database (auto-created)
-└── README.md          # This file
+├── .gitignore          # Git ignore rules
+├── user_data/          # Per-user SQLite databases (auto-created)
+├── logs/               # Rotating log files (auto-created)
+├── tests/              # Test suite (pytest)
+│   ├── conftest.py
+│   ├── test_expense_manager.py
+│   ├── test_expense_manager_extended.py
+│   ├── test_bot_flow.py
+│   └── test_bot_extended.py
+└── README.md           # This file
 ```
 
 ## 🗄️ Database Schema
