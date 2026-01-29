@@ -91,8 +91,7 @@ class ExpenseManager:
             safe_id = "".join(c for c in str(user_id) if c.isalnum() or c in ('_', '-'))
             self.db_path = str(db_dir / f"{safe_id}.db")
         else:
-            # Fallback for backward compatibility
-            self.db_path = "expenses.db"
+            raise ValueError("Either db_path or user_id must be provided")
         self._init_db()
     
     def _init_db(self):
