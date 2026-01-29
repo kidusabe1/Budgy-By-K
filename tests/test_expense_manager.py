@@ -1,16 +1,8 @@
-import os
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import pytest
 
 from database import ExpenseManager
-
-
-@pytest.fixture()
-def expense_manager(tmp_path):
-    db_path = tmp_path / "test_expenses.db"
-    manager = ExpenseManager(db_path=str(db_path))
-    yield manager
 
 
 def test_add_expense_and_summary_day(expense_manager: ExpenseManager):

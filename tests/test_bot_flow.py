@@ -1,46 +1,18 @@
 import pytest
 
-from bot import BudgetBot, BotConfig, ExpenseParser, KeyboardFactory, VisualizationService
+from bot import BudgetBot, BotConfig, ExpenseParser, VisualizationService
 from database import ExpenseManager
 
-
-class DummyUser:
-    """Dummy user for testing."""
-    def __init__(self, user_id=12345, username='test_user'):
-        self.id = user_id
-        self.username = username
-
-
-class DummyMessage:
-    def __init__(self):
-        self.texts = []
-        self.photos = []
-
-    async def reply_text(self, text, **kwargs):
-        self.texts.append(text)
-
-    async def reply_photo(self, photo=None, caption=None, **kwargs):
-        self.photos.append({"photo": photo, "caption": caption})
-
-
-class DummyUpdate:
-    def __init__(self):
-        self.message = DummyMessage()
-        self.effective_user = DummyUser()
+from conftest import DummyUpdate
 
 
 @pytest.fixture()
 def bot_instance(tmp_path):
     config = BotConfig(token="123:TEST")
     viz = VisualizationService()
-    categories = [
-        "🛒 Groceries", "🍽️ Dining Out", "🚗 Transportation",
-        "🎬 Entertainment", "💊 Health", "📱 Utilities",
-        "🛍️ Shopping", "📚 Education", "💼 Work", "🎁 Other"
-    ]
-    # Override the DB_DIR to use temp path
+    # Use the actual production categories from ExpenseManager
     ExpenseManager.DB_DIR = str(tmp_path / "user_data")
-    bot = BudgetBot(config, viz, categories)
+    bot = BudgetBot(config, viz, ExpenseManager.CATEGORIES)
     # Mark onboarding as complete so other features work
     manager = bot._get_manager('test_user')
     manager.register_user(12345)

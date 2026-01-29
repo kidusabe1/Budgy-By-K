@@ -7,14 +7,6 @@ import pytest
 from database import ExpenseManager
 
 
-@pytest.fixture()
-def expense_manager(tmp_path):
-    """Create a fresh ExpenseManager with a temp database."""
-    db_path = tmp_path / "test_expenses.db"
-    manager = ExpenseManager(db_path=str(db_path))
-    yield manager
-
-
 class TestAddExpense:
     """Tests for add_expense functionality."""
 
