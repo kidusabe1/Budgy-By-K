@@ -1048,20 +1048,22 @@ class BudgetBot:
             await self._handle_onboarding(update, context, text)
             return
         
-        # Check onboarding for non-onboarding text input
-        if user_id:
-            manager = self._get_manager(user_id)
-            chat_id = update.effective_chat.id
-            if not manager.is_onboarding_completed(chat_id):
-                await update.message.reply_text(
-                    "👋 Welcome! Please complete the setup first.\n\nUse /start to begin.",
-                    reply_markup=self.keyboards.menu_button()
-                )
-                return
-        else:
+        # Guard: require valid user identification
+        if not user_id:
             await update.message.reply_text("❌ Could not identify user. Please try again.")
             return
-            
+
+        # Guard: require completed onboarding
+        manager = self._get_manager(user_id)
+        chat_id = update.effective_chat.id
+        if not manager.is_onboarding_completed(chat_id):
+            await update.message.reply_text(
+                "👋 Welcome! Please complete the setup first.\n\nUse /start to begin.",
+                reply_markup=self.keyboards.menu_button()
+            )
+            return
+
+        # --- User is identified and onboarding is complete ---
         user_state = context.user_data
 
         if user_state.get('awaiting') == 'amount':
