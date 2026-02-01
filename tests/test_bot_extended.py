@@ -1,4 +1,5 @@
 """Comprehensive tests for bot components and flows."""
+import json
 import pytest
 from datetime import datetime
 from unittest.mock import MagicMock
@@ -760,6 +761,26 @@ class TestCallbackHandlers:
         # Should now be ready to set budget
         assert context.user_data.get('action') == 'set_budget'
         assert context.user_data.get('category') == bot_instance.keyboards.categories[0]
+
+    @pytest.mark.asyncio
+    async def test_mapcat_callback_saves_mapping(self, bot_instance, monkeypatch, tmp_path):
+        """mapcat callback should persist merchant mapping and confirm to user."""
+        map_file = tmp_path / "merchant_map.json"
+        monkeypatch.setattr("merchant_map.MAP_FILE", map_file)
+
+        update = DummyUpdate()
+        context = DummyContext()
+        query = DummyCallbackQuery("mapcat:Coffee%20Shop:0")
+        update.callback_query = query
+
+        await bot_instance.button_callback(update, context)
+
+        assert map_file.exists()
+        with map_file.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+        assert data.get("coffee shop") == "🛒 Groceries"
+        assert query.message.texts
+        assert "Saved mapping" in query.message.texts[0]["text"]
 
 
 # ============== Integration Tests ==============

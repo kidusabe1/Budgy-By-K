@@ -261,16 +261,52 @@ class ExpenseManager:
             conn.commit()
         return f"🗑️ Deleted last {to_delete} expense(s)."
     
-    def add_expense(self, category: str, amount: float, note: str = "", receipt_file_id: str = None) -> str:
-        """Add an expense to the database."""
+    def add_expense(
+        self,
+        category: str,
+        amount: float,
+        note: str = "",
+        receipt_file_id: str = None,
+        date_override: Optional[datetime] = None,
+    ) -> str:
+        """Add an expense to the database.
+
+        Args:
+            category: Expense category label.
+            amount: Amount to record.
+            note: Optional note text.
+            receipt_file_id: Optional Telegram file id for receipts.
+            date_override: Optional explicit timestamp for the entry (for webhooks/imports).
+        """
         if amount <= 0:
             return "❌ Amount must be positive."
+
         with self._connect() as conn:
             cursor = conn.cursor()
-            cursor.execute('''
-                INSERT INTO transactions (category, amount, note, date, receipt_file_id)
-                VALUES (?, ?, ?, datetime('now', 'localtime'), ?)
-            ''', (category, amount, note, receipt_file_id))
+
+            if date_override is not None:
+                if isinstance(date_override, datetime):
+                    date_value = date_override.strftime("%Y-%m-%d %H:%M:%S")
+                else:
+                    # Accept preformatted strings for flexibility in imports/webhooks
+                    date_value = str(date_override)
+
+                cursor.execute(
+                    '''
+                    INSERT INTO transactions (category, amount, note, date, receipt_file_id)
+                    VALUES (?, ?, ?, ?, ?)
+                    ''',
+                    (category, amount, note, date_value, receipt_file_id),
+                )
+            else:
+                cursor.execute(
+                    '''
+                    INSERT INTO transactions (category, amount, note, date, receipt_file_id)
+                    VALUES (?, ?, ?, datetime('now', 'localtime'), ?)
+                    ''',
+                    (category, amount, note, receipt_file_id),
+                )
+
             conn.commit()
 
         note_text = f" ({note})" if note else ""

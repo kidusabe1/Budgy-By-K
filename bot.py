@@ -1,6 +1,7 @@
 import io
 import logging
 import os
+import urllib.parse
 from dataclasses import dataclass
 from datetime import datetime, time
 from pathlib import Path
@@ -12,6 +13,7 @@ matplotlib.use('Agg')  # Use non-interactive backend for servers
 import matplotlib.pyplot as plt
 import numpy as np
 from logging.handlers import RotatingFileHandler
+from dotenv import load_dotenv
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, KeyboardButton, ReplyKeyboardMarkup, Update
 from telegram.ext import (
     Application,
@@ -24,6 +26,10 @@ from telegram.ext import (
 from telegram.error import BadRequest
 
 from database import ExpenseManager
+from merchant_map import normalize_merchant, update_mapping
+
+
+load_dotenv()
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 LOG_FILE = os.getenv("LOG_FILE", "logs/bot.log")
@@ -933,6 +939,35 @@ class BudgetBot:
         if data == "confirm_all":
             result = manager.clear_all_data()
             await edit_or_send(result, reply_markup=self.keyboards.main_menu())
+            return
+
+        # Merchant mapping callbacks from webhook prompts
+        if data.startswith("mapcat:"):
+            try:
+                _, enc_merchant, idx_str = data.split(":", 2)
+                idx = int(idx_str)
+                merchant = urllib.parse.unquote_plus(enc_merchant)
+                options = [
+                    "🛒 Groceries",
+                    "🍽️ Dining Out",
+                    "🚗 Transportation",
+                    "💊 Healthcare",
+                    "📱 Subscriptions",
+                    "🏠 Housing",
+                    "🎬 Entertainment",
+                    "🔧 Other",
+                ]
+                if 0 <= idx < len(options) and merchant:
+                    category = options[idx]
+                    update_mapping(normalize_merchant(merchant), category)
+                    await edit_or_send(
+                        f"✅ Saved mapping: {merchant} → {category}",
+                        reply_markup=self.keyboards.main_menu(),
+                    )
+                else:
+                    await edit_or_send("Could not save mapping.", reply_markup=self.keyboards.main_menu())
+            except Exception:
+                await edit_or_send("Could not save mapping.", reply_markup=self.keyboards.main_menu())
             return
 
         if data == "cancel":
