@@ -25,8 +25,12 @@ from telegram.ext import (
 )
 from telegram.error import BadRequest
 
-from database import ExpenseManager
-from merchant_map import normalize_merchant, update_mapping
+if os.getenv("USE_FIRESTORE", "").lower() in ("true", "1", "yes"):
+    from firestore_database import FirestoreExpenseManager as ExpenseManager
+    from firestore_merchant_map import normalize_merchant, update_mapping
+else:
+    from database import ExpenseManager
+    from merchant_map import normalize_merchant, update_mapping
 
 
 load_dotenv()
@@ -384,7 +388,7 @@ class BudgetBot:
         self.categories = categories
         self.keyboards = KeyboardFactory(categories)
         self._user_managers: Dict[str, ExpenseManager] = {}
-        self.application = Application.builder().token(config.token).build()
+        self.application = Application.builder().token(config.token).updater(None).build()
     
     def _get_manager(self, user_id: str) -> ExpenseManager:
         """Get or create ExpenseManager for a specific user."""
@@ -425,7 +429,12 @@ class BudgetBot:
             return False
         return True
 
+    def setup(self) -> None:
+        """Register handlers without starting polling. Used by webhook entrypoint."""
+        self._register_handlers()
+
     def run(self) -> None:
+        """Start bot in local polling mode (for development)."""
         self._register_handlers()
         self._schedule_jobs()
         logger.info("Starting bot...")
@@ -1253,8 +1262,9 @@ class BudgetBot:
         response = manager.add_expense(matched_category, amount, note, receipt_file_id)
         await update.message.reply_text(response, reply_markup=self.keyboards.main_menu())
 
-    async def send_daily_report(self, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def send_daily_report(self, context=None) -> None:
         """Send daily reports to all users with their own data."""
+        bot = context.bot if context else self.application.bot
         # Iterate over all cached user managers
         for user_id, manager in self._user_managers.items():
             users = manager.get_all_registered_users()
@@ -1264,30 +1274,31 @@ class BudgetBot:
                 try:
                     summary, chart_data = manager.get_summary("week")
                     daily_data = manager.get_daily_breakdown("week")
-                    await context.bot.send_message(chat_id=chat_id, text=f"🌙 End of Day Report\n\n{summary}")
+                    await bot.send_message(chat_id=chat_id, text=f"🌙 End of Day Report\n\n{summary}")
                     if chart_data:
                         chart = self.viz.pie_chart(chart_data, "This Week So Far")
                         if chart:
-                            await context.bot.send_photo(chat_id=chat_id, photo=InputFile(chart, filename="daily_report.png"))
+                            await bot.send_photo(chat_id=chat_id, photo=InputFile(chart, filename="daily_report.png"))
                     if daily_data:
                         bar = self.viz.bar_chart(daily_data, "Daily Spending This Week")
                         if bar:
-                            await context.bot.send_photo(chat_id=chat_id, photo=InputFile(bar, filename="daily_trend.png"))
+                            await bot.send_photo(chat_id=chat_id, photo=InputFile(bar, filename="daily_trend.png"))
                 except Exception as exc:
                     logger.error("Failed daily report to %s: %s", chat_id, exc)
 
-    async def send_monthly_report(self, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def send_monthly_report(self, context=None) -> None:
         """Send monthly reports to all users with their own data."""
+        bot = context.bot if context else self.application.bot
         for user_id, manager in self._user_managers.items():
             users = manager.get_all_registered_users()
             for chat_id in users:
                 try:
                     status = manager.get_budget_status()
                     plan = manager.get_monthly_plan()
-                    await context.bot.send_message(chat_id=chat_id, text=f"📅 Monthly Budget Report\n\n{status}")
+                    await bot.send_message(chat_id=chat_id, text=f"📅 Monthly Budget Report\n\n{status}")
                     chart = self.viz.budget_chart(plan)
                     if chart:
-                        await context.bot.send_photo(chat_id=chat_id, photo=InputFile(chart, filename="monthly_budget.png"))
+                        await bot.send_photo(chat_id=chat_id, photo=InputFile(chart, filename="monthly_budget.png"))
                 except Exception as exc:
                     logger.error("Failed monthly report to %s: %s", chat_id, exc)
 

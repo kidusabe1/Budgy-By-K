@@ -12,15 +12,20 @@ from dotenv import load_dotenv
 
 from flask import Flask, jsonify, request
 
-from database import ExpenseManager
-from merchant_map import MAP_FILE, load_map, normalize_merchant, save_map, update_mapping
+if os.getenv("USE_FIRESTORE", "").lower() in ("true", "1", "yes"):
+    from firestore_database import FirestoreExpenseManager as ExpenseManager
+    from firestore_merchant_map import load_map, normalize_merchant, save_map, update_mapping
+else:
+    from database import ExpenseManager
+    from merchant_map import MAP_FILE, load_map, normalize_merchant, save_map, update_mapping
 
 
 load_dotenv()
 logger = logging.getLogger(__name__)
 
 # Allow overriding DB location and target user for testing or multi-user setups
-ExpenseManager.DB_DIR = os.getenv("APPLE_PAY_DB_DIR", ExpenseManager.DB_DIR)
+if not os.getenv("USE_FIRESTORE", "").lower() in ("true", "1", "yes"):
+    ExpenseManager.DB_DIR = os.getenv("APPLE_PAY_DB_DIR", ExpenseManager.DB_DIR)
 DEFAULT_USER_KEY = os.getenv("APPLE_PAY_USER_KEY", "default_user")
 
 # Map merchants to categories (extend as needed)
