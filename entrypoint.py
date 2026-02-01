@@ -58,7 +58,8 @@ def _init_bot():
     global budget_bot, _Update, _bot_error
     try:
         from telegram import Update as TgUpdate
-        from bot import BotConfig, BudgetBot, VisualizationService, ExpenseManager
+        from my_budget.bot import BotConfig, BudgetBot, VisualizationService
+        from my_budget.database import ExpenseManager
 
         _Update = TgUpdate
 

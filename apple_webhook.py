@@ -12,12 +12,8 @@ from dotenv import load_dotenv
 
 from flask import Flask, jsonify, request
 
-if os.getenv("USE_FIRESTORE", "").lower() in ("true", "1", "yes"):
-    from firestore_database import FirestoreExpenseManager as ExpenseManager
-    from firestore_merchant_map import load_map, normalize_merchant, save_map, update_mapping
-else:
-    from database import ExpenseManager
-    from merchant_map import MAP_FILE, load_map, normalize_merchant, save_map, update_mapping
+from my_budget.database import ExpenseManager
+from my_budget.merchant import MAP_FILE, load_map, normalize_merchant, save_map, update_mapping
 
 
 load_dotenv()

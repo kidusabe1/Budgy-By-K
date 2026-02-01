@@ -11,6 +11,7 @@ from database import ExpenseManager
 
 def _load_webhook(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """Load apple_webhook with isolated DB dir and user."""
+    monkeypatch.setenv("USE_FIRESTORE", "false")
     monkeypatch.setenv("APPLE_PAY_USER_KEY", "webhook_user")
     monkeypatch.setenv("APPLE_PAY_DB_DIR", str(tmp_path / "data"))
 

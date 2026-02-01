@@ -3,7 +3,7 @@
 import json
 import os
 import sys
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import MagicMock, AsyncMock, patch
 
 import pytest
 
@@ -11,7 +11,6 @@ import pytest
 @pytest.fixture()
 def client():
     """Create a Flask test client with mocked bot internals."""
-    # Patch heavy imports before loading entrypoint
     mock_bot = MagicMock()
     mock_bot.application = MagicMock()
     mock_bot.application.bot = MagicMock()
@@ -25,27 +24,24 @@ def client():
     mock_update_cls = MagicMock()
     mock_update_cls.de_json = MagicMock(return_value=MagicMock())
 
-    with (
-        patch.dict(os.environ, {
-            "TELEGRAM_BOT_TOKEN": "123:TEST",
-            "SCHEDULER_SECRET": "test-secret",
-        }),
-        patch("bot.BudgetBot", return_value=mock_bot),
-        patch("bot.Application"),
-    ):
-        # Remove cached entrypoint module if present
+    with patch.dict(os.environ, {
+        "TELEGRAM_BOT_TOKEN": "123:TEST",
+        "SCHEDULER_SECRET": "test-secret",
+    }):
+        # Remove cached entrypoint module to get a fresh import
         sys.modules.pop("entrypoint", None)
+        import entrypoint
 
-        with patch("entrypoint.Update", mock_update_cls):
-            import importlib
-            import entrypoint
-            entrypoint = importlib.reload(entrypoint)
+        # Inject mocks directly — bypass the real _init_bot
+        entrypoint.budget_bot = mock_bot
+        entrypoint._Update = mock_update_cls
+        entrypoint._bot_ready.set()
+        entrypoint._bot_starting.set()
 
-            # Inject our mocks
-            entrypoint.budget_bot = mock_bot
-            entrypoint.Update = mock_update_cls
+        yield entrypoint.app.test_client(), mock_bot, mock_update_cls
 
-            yield entrypoint.app.test_client(), mock_bot, mock_update_cls
+        # Cleanup
+        sys.modules.pop("entrypoint", None)
 
 
 class TestHealthEndpoint:
