@@ -111,3 +111,20 @@ def setup_completed_onboarding(bot_instance, chat_id=12345, username="test_user"
     manager.register_user(chat_id)
     manager.complete_onboarding(chat_id)
     return manager
+
+
+# ============== Firestore Fixtures ==============
+
+
+@pytest.fixture()
+def mock_firestore_client():
+    """Create a fresh in-memory MockFirestoreClient."""
+    from tests.mock_firestore import MockFirestoreClient
+    return MockFirestoreClient()
+
+
+@pytest.fixture()
+def firestore_expense_manager(mock_firestore_client):
+    """Create a FirestoreExpenseManager backed by the in-memory mock."""
+    from firestore_database import FirestoreExpenseManager
+    return FirestoreExpenseManager(user_id="test_user", db_client=mock_firestore_client)
