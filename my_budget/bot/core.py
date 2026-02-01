@@ -26,11 +26,11 @@ from telegram.ext import (
 from telegram.error import BadRequest
 
 if os.getenv("USE_FIRESTORE", "").lower() in ("true", "1", "yes"):
-    from firestore_database import FirestoreExpenseManager as ExpenseManager
-    from firestore_merchant_map import normalize_merchant, update_mapping
+    from legacy.firestore_database import FirestoreExpenseManager as ExpenseManager
+    from legacy.firestore_merchant_map import normalize_merchant, update_mapping
 else:
-    from database import ExpenseManager
-    from merchant_map import normalize_merchant, update_mapping
+    from legacy.database import ExpenseManager
+    from legacy.merchant_map import normalize_merchant, update_mapping
 
 
 load_dotenv()
