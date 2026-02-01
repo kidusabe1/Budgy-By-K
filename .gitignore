@@ -38,3 +38,4 @@ logs/
 
 # User data (per-user databases)
 user_data/
+legacy/
