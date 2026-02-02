@@ -18,6 +18,23 @@ venv/
 .venv/
 media/
 env/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env
+pip-log.txt
+pip-delete-this-directory.txt
+.tox
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+*.pot
+*.mo
 
 .env
 
@@ -43,3 +60,29 @@ legacy/
 
 # Chart preview test output
 chart_previews/
+
+# Temporary files
+tmp_*.json
+*.tmp
+*.bak
+*.swp
+*.swo
+*~
+
+# IDE files
+*.sublime-project
+*.sublime-workspace
+.vscode/settings.json
+.vscode/launch.json
+.vscode/extensions.json
+*.code-workspace
+
+# OS generated files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE_BIN/
+*.cab
+*.msi
+*.msm
+*.msp
