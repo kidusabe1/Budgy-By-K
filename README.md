@@ -227,4 +227,11 @@ The bot understands common shortcuts:
 
 ---
 
+<!-- Badges -->
+[![License](https://img.shields.io/github/license/kidusabe1/Budgy-By-K)](https://github.com/kidusabe1/Budgy-By-K/blob/main/LICENSE)
+[![Stars](https://img.shields.io/github/stars/kidusabe1/Budgy-By-K?style=flat-square)](https://github.com/kidusabe1/Budgy-By-K/stargazers)
+[![Forks](https://img.shields.io/github/forks/kidusabe1/Budgy-By-K?style=flat-square)](https://github.com/kidusabe1/Budgy-By-K/network)
+[![Last Commit](https://img.shields.io/github/last-commit/kidusabe1/Budgy-By-K?style=flat-square)](https://github.com/kidusabe1/Budgy-By-K/commits/main)
+[![Contributors](https://img.shields.io/github/contributors/kidusabe1/Budgy-By-K?style=flat-square)](https://github.com/kidusabe1/Budgy-By-K/graphs/contributors)
+
 Happy budgeting! 💸
