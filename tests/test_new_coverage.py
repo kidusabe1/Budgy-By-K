@@ -15,8 +15,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from bot import BudgetBot, KeyboardFactory
-from database import ExpenseManager
+from my_budget.bot import BudgetBot, KeyboardFactory
+from my_budget.database import ExpenseManager
 
 from conftest import (
     DummyUpdate,

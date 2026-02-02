@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from database import ExpenseManager
+from my_budget.database import ExpenseManager
 
 
 def _load_webhook(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
@@ -15,8 +15,13 @@ def _load_webhook(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setenv("APPLE_PAY_USER_KEY", "webhook_user")
     monkeypatch.setenv("APPLE_PAY_DB_DIR", str(tmp_path / "data"))
 
-    # Import inside helper to respect fresh env
-    import apple_webhook
+    # core.py's load_dotenv() may have set USE_FIRESTORE=true from .env
+    # before we get here. Clear the merchant module so it re-evaluates.
+    import sys
+    for mod in [k for k in sys.modules if k.startswith("my_budget.merchant")]:
+        del sys.modules[mod]
+
+    import legacy.apple_webhook as apple_webhook
 
     return importlib.reload(apple_webhook)
 

@@ -8,8 +8,8 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from bot import BudgetBot, BotConfig, VisualizationService
-from database import ExpenseManager
+from my_budget.bot import BudgetBot, BotConfig, VisualizationService
+from my_budget.database import ExpenseManager
 
 
 # ============== Shared Dummy / Mock Objects ==============
@@ -126,5 +126,5 @@ def mock_firestore_client():
 @pytest.fixture()
 def firestore_expense_manager(mock_firestore_client):
     """Create a FirestoreExpenseManager backed by the in-memory mock."""
-    from firestore_database import FirestoreExpenseManager
+    from my_budget.database.firestore import FirestoreExpenseManager
     return FirestoreExpenseManager(user_id="test_user", db_client=mock_firestore_client)

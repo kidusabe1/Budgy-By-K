@@ -4,8 +4,8 @@ import pytest
 from datetime import datetime
 from unittest.mock import MagicMock
 
-from bot import ExpenseParser, KeyboardFactory, VisualizationService
-from database import ExpenseManager
+from my_budget.bot import ExpenseParser, KeyboardFactory, VisualizationService
+from my_budget.database import ExpenseManager
 
 from conftest import (
     DummyMessage, DummyUser, DummyChat, DummyUpdate,
@@ -766,7 +766,7 @@ class TestCallbackHandlers:
     async def test_mapcat_callback_saves_mapping(self, bot_instance, monkeypatch, tmp_path):
         """mapcat callback should persist merchant mapping and confirm to user."""
         map_file = tmp_path / "merchant_map.json"
-        monkeypatch.setattr("merchant_map.MAP_FILE", map_file)
+        monkeypatch.setattr("my_budget.merchant.file_store.MAP_FILE", map_file)
 
         update = DummyUpdate()
         context = DummyContext()

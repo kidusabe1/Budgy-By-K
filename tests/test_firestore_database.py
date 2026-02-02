@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from firestore_database import FirestoreExpenseManager
+from my_budget.database.firestore import FirestoreExpenseManager
 from tests.mock_firestore import MockFirestoreClient
 
 

@@ -131,7 +131,7 @@ def telegram_webhook():
 @app.route("/webhook/apple_pay", methods=["POST"])
 def apple_pay_proxy():
     """Delegate to the existing apple_webhook handler."""
-    from apple_webhook import apple_pay_webhook
+    from my_budget.webhooks.apple_pay import apple_pay_webhook
     return apple_pay_webhook()
 
 

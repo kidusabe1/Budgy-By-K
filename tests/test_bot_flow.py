@@ -1,7 +1,7 @@
 import pytest
 
-from bot import BudgetBot, BotConfig, ExpenseParser, VisualizationService
-from database import ExpenseManager
+from my_budget.bot import BudgetBot, BotConfig, ExpenseParser, VisualizationService
+from my_budget.database import ExpenseManager
 
 from conftest import DummyUpdate
 

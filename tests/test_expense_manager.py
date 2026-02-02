@@ -2,7 +2,7 @@ from datetime import datetime
 
 import pytest
 
-from database import ExpenseManager
+from my_budget.database import ExpenseManager
 
 
 def test_add_expense_and_summary_day(expense_manager: ExpenseManager):

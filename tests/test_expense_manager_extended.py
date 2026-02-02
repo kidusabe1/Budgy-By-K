@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from database import ExpenseManager
+from my_budget.database import ExpenseManager
 
 
 class TestAddExpense:

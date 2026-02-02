@@ -16,6 +16,7 @@ build/
 # Virtual environments
 venv/
 .venv/
+media/
 env/
 
 .env
@@ -39,3 +40,6 @@ logs/
 # User data (per-user databases)
 user_data/
 legacy/
+
+# Chart preview test output
+chart_previews/

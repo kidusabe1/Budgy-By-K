@@ -1,6 +1,6 @@
 """Tests for firestore_merchant_map using the in-memory mock client."""
 
-import firestore_merchant_map as fmm
+import my_budget.merchant.firestore_store as fmm
 from tests.mock_firestore import MockFirestoreClient
 
 

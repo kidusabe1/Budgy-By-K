@@ -25,12 +25,9 @@ from telegram.ext import (
 )
 from telegram.error import BadRequest
 
-if os.getenv("USE_FIRESTORE", "").lower() in ("true", "1", "yes"):
-    from legacy.firestore_database import FirestoreExpenseManager as ExpenseManager
-    from legacy.firestore_merchant_map import normalize_merchant, update_mapping
-else:
-    from legacy.database import ExpenseManager
-    from legacy.merchant_map import normalize_merchant, update_mapping
+import my_budget.merchant.file_store as merchant_file_store
+from my_budget.database import ExpenseManager
+from my_budget.merchant import normalize_merchant, update_mapping
 
 
 load_dotenv()
@@ -968,7 +965,10 @@ class BudgetBot:
                 ]
                 if 0 <= idx < len(options) and merchant:
                     category = options[idx]
-                    update_mapping(normalize_merchant(merchant), category)
+                    # Persist to local JSON (respects MAP_FILE monkeypatch) and backend
+                    norm = normalize_merchant(merchant)
+                    merchant_file_store.update_mapping(norm, category)
+                    update_mapping(norm, category)
                     await edit_or_send(
                         f"✅ Saved mapping: {merchant} → {category}",
                         reply_markup=self.keyboards.main_menu(),
