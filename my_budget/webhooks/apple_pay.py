@@ -200,7 +200,10 @@ app = Flask(__name__)
 
 @app.route("/webhook/apple_pay", methods=["POST"])
 def apple_pay_webhook():
-    data = request.get_json(silent=True) or {}
+    raw_data = request.get_json(silent=True) or {}
+    # Normalize keys to lowercase for case-insensitive matching
+    data = {k.lower(): v for k, v in raw_data.items()}
+
     merchant = data.get("merchant", "Unknown")
     raw_amount = data.get("amount", 0)
     try:
@@ -208,7 +211,8 @@ def apple_pay_webhook():
     except (TypeError, ValueError):
         amount = 0.0
 
-    card = data.get("card_name", "Apple Pay")
+    # Accept "card_name", "card or pass", "card name" as the card field
+    card = data.get("card_name") or data.get("card or pass") or data.get("card name") or "Apple Pay"
     date_str = data.get("date")
     tx_date = None
     if date_str:
