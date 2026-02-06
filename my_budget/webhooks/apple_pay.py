@@ -201,6 +201,7 @@ app = Flask(__name__)
 @app.route("/webhook/apple_pay", methods=["POST"])
 def apple_pay_webhook():
     raw_data = request.get_json(silent=True) or {}
+    logging.info("Apple Pay webhook raw payload: %s", raw_data)
     # Normalize keys to lowercase for case-insensitive matching
     data = {k.lower(): v for k, v in raw_data.items()}
 
@@ -221,11 +222,13 @@ def apple_pay_webhook():
         except Exception:
             tx_date = None
 
+    logging.info("Apple Pay parsed: merchant=%s amount=%s card=%s", merchant, amount, card)
     category = predict_category(merchant)
     note = f"Apple Pay ({card})"
 
     manager = ExpenseManager(user_id=DEFAULT_USER_KEY)
-    manager.add_expense(category=category, amount=amount, note=note, date_override=tx_date)
+    result = manager.add_expense(category=category, amount=amount, note=note, date_override=tx_date)
+    logging.info("Apple Pay add_expense result: %s", result)
     if category != "🔧 Other":
         update_mapping(normalize_merchant(merchant), category)
 
