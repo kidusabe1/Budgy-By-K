@@ -3,11 +3,12 @@
 import json
 import logging
 import os
+import re
 import urllib.parse
 import urllib.request
 from datetime import datetime
 from difflib import get_close_matches
-from typing import Optional
+from typing import Optional, Tuple
 
 from dotenv import load_dotenv
 from flask import Flask, jsonify, request
@@ -198,29 +199,63 @@ def predict_category(merchant: str) -> str:
 app = Flask(__name__)
 
 
+def _parse_key_only_payload(raw_data: dict) -> Optional[Tuple[str, float, str]]:
+    """Parse Apple Pay payloads where data is in keys, not values.
+
+    iOS Shortcuts may send payloads like:
+        {'Market In The City': '', '₪6.70': '', 'לאומי ויזה בינלאומי': ''}
+    Returns (merchant, amount, card) or None if the format doesn't match.
+    """
+    if not raw_data or not all(v == "" for v in raw_data.values()):
+        return None
+
+    merchant = None
+    amount = 0.0
+    card = "Apple Pay"
+
+    for key in raw_data:
+        amount_match = re.search(r'[₪$€£]\s*([\d,.]+)', key)
+        if amount_match:
+            amount = float(amount_match.group(1).replace(',', ''))
+            continue
+        if merchant is None:
+            merchant = key
+        else:
+            card = key
+
+    if amount > 0:
+        return merchant or "Unknown", amount, card
+    return None
+
+
 @app.route("/webhook/apple_pay", methods=["POST"])
 def apple_pay_webhook():
     raw_data = request.get_json(silent=True) or {}
     logging.info("Apple Pay webhook raw payload: %s", raw_data)
-    # Normalize keys to lowercase for case-insensitive matching
-    data = {k.lower(): v for k, v in raw_data.items()}
 
-    merchant = data.get("merchant", "Unknown")
-    raw_amount = data.get("amount", 0)
-    try:
-        amount = float(raw_amount)
-    except (TypeError, ValueError):
-        amount = 0.0
+    parsed = _parse_key_only_payload(raw_data)
+    if parsed:
+        merchant, amount, card = parsed
+        tx_date = None
+    else:
+        # Structured payload: {"merchant": ..., "amount": ..., ...}
+        data = {k.lower(): v for k, v in raw_data.items()}
 
-    # Accept "card_name", "card or pass", "card name" as the card field
-    card = data.get("card_name") or data.get("card or pass") or data.get("card name") or "Apple Pay"
-    date_str = data.get("date")
-    tx_date = None
-    if date_str:
+        merchant = data.get("merchant", "Unknown")
+        raw_amount = data.get("amount", 0)
         try:
-            tx_date = datetime.fromisoformat(str(date_str))
-        except Exception:
-            tx_date = None
+            amount = float(raw_amount)
+        except (TypeError, ValueError):
+            amount = 0.0
+
+        card = data.get("card_name") or data.get("card or pass") or data.get("card name") or "Apple Pay"
+        date_str = data.get("date")
+        tx_date = None
+        if date_str:
+            try:
+                tx_date = datetime.fromisoformat(str(date_str))
+            except Exception:
+                tx_date = None
 
     logging.info("Apple Pay parsed: merchant=%s amount=%s card=%s", merchant, amount, card)
     category = predict_category(merchant)
